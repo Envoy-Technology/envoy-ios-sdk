@@ -30,6 +30,11 @@ public protocol EnvoyType {
     func prepLink(request: PrepLinkRequest,
                     completion: @escaping (PrepLinkResponse?, WebError?) -> ())
     @MainActor
+    func manageLinks(request: ManageLinksRequest,
+                     completion: @escaping (ManageLinksResponse?, WebError?) -> ())
+    @MainActor
+    func clearManagedLinks(completion: @escaping (ClearManagedLinksResponse?, WebError?) -> ())
+    @MainActor
     func getUserRemainingQuota(userId: String,
                                completion: @escaping (UserQuotaResponse?, WebError?) -> ())
     @MainActor
@@ -164,7 +169,18 @@ extension Envoy: EnvoyType {
         PrepLinkService(client: self.webClient, apiKey: self.apiKey)
             .prepLink(request: request, completion: completion)
     }
-    
+
+    public func manageLinks(request: ManageLinksRequest,
+                            completion: @escaping (ManageLinksResponse?, WebError?) -> ()) {
+        ManageLinksService(client: self.webClient, apiKey: self.apiKey)
+            .manageLinks(request: request, completion: completion)
+    }
+
+    public func clearManagedLinks(completion: @escaping (ClearManagedLinksResponse?, WebError?) -> ()) {
+        ClearManagedLinksService(client: self.webClient, apiKey: self.apiKey)
+            .clearManagedLinks(completion: completion)
+    }
+
     public func getUserRemainingQuota(userId: String,
                                       completion: @escaping (UserQuotaResponse?, WebError?) -> ()) {
         GetUserRemainingQuotaService(client: self.webClient, apiKey: self.apiKey)
