@@ -259,3 +259,23 @@ Envoy.shared.prepLink(request: request) { response, error in
     print(error)
 }
 ```
+## 13. Manage Links
+
+Manage links adds additional links to create a carousel.
+
+```swift
+Envoy.shared.manageLinks(request: ManageLinksRequest) { response, error in
+    print(response)
+    print(error)
+}
+```
+## 14. Clear additional links
+
+Clear additional links from carousel.
+
+```swift
+Envoy.shared.clearManagedLinks() { response, error in
+    print(response)
+    print(error)
+}
+```
