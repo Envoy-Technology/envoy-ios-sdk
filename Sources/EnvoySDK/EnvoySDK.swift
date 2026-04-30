@@ -3,7 +3,6 @@
 #if canImport(UIKit)
 import Foundation
 import Combine
-import Photos
 import UIKit
 
 public protocol EnvoyProtocol {
@@ -100,34 +99,35 @@ public final class Envoy: ObservableObject {
         }
     }
 
-    // MARK: Delegate
+    // MARK: Screenshot capture
+    //
+    // We snapshot the foreground key window the moment iOS posts
+    // `userDidTakeScreenshotNotification`. This needs no Photos-library
+    // permission, runs synchronously, and delivers exactly what the user
+    // saw — sidestepping the iOS 26 / iPhone 17 Pro "Full-Screen Preview"
+    // flow that delays or prevents the screenshot from reaching Photos.
     func setupScreenshotNotification() {
-        notificationObserver = NotificationCenter.default.addObserver(forName: UIApplication.userDidTakeScreenshotNotification,
-                                                                      object: nil,
-                                                                      queue: .main) { [weak self] _ in
-            guard let self = self else { return }
-            self.getMostRecentPhoto { image in
-                self.delegate?.userDidTookScreenshot(image)
-            }
+        notificationObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.userDidTakeScreenshotNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            let image = Self.captureKeyWindowImage()
+            self.delegate?.userDidTookScreenshot(image)
         }
     }
 
-    func getMostRecentPhoto(completion: @escaping (UIImage?) -> Void) {
-        let options = PHFetchOptions()
-        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        let fetchResult = PHAsset.fetchAssets(with: .image, options: options)
+    private static func captureKeyWindowImage() -> UIImage? {
+        guard let window = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive })?
+            .windows
+            .first(where: { $0.isKeyWindow }) else { return nil }
 
-        if let asset = fetchResult.firstObject {
-            let manager = PHImageManager.default()
-            let requestOptions = PHImageRequestOptions()
-            requestOptions.isSynchronous = false
-            requestOptions.deliveryMode = .highQualityFormat
-
-            manager.requestImage(for: asset, targetSize: PHImageManagerMaximumSize, contentMode: .aspectFit, options: requestOptions) { image, _ in
-                completion(image)
-            }
-        } else {
-            completion(nil)
+        let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
+        return renderer.image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
         }
     }
 }
