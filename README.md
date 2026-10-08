@@ -28,7 +28,30 @@ func application(_ application: UIApplication, didFinishLaunchingWithOptions lau
 }
 ```
 
-## 2.1 Initialize EnvoySDK with delegate (optional)
+## 2.1 Check deferred link (required for install attribution)
+
+> **Upgrading from 0.0.x:** `Envoy.initialize(apiKey:)` no longer reads the clipboard. If you don't call `checkDeferredLink`, installs are not attributed to the share link that brought the user: pixel events are sent without `share_link_hash` and `lead_uuid`.
+
+Envoy landing pages copy the share link to the clipboard before redirecting to the App Store. To attribute the install to that link, call `checkDeferredLink` after initialization. The SDK doesn't read the clipboard on its own, so you decide when it happens. If you need user consent first (e.g. under GDPR/ePrivacy in the EU), call it right after consent is given. Call it as early as you can: the longer after install, the less likely the clipboard still holds the link.
+
+```swift
+Envoy.initialize(apiKey: {your-api-key})
+Envoy.shared.checkDeferredLink { found in
+    // found == true when Envoy link parameters were stored.
+}
+```
+
+What it does:
+- Runs once per install. Once it has a definite answer (no web URL on the clipboard, or the clipboard was read), later calls complete with `false` immediately. If iOS can't tell whether the clipboard holds a URL, or doesn't answer within 3 seconds, the check is not used up and a later call tries again.
+- Calls made while a check is in progress get the result of that check.
+- On iOS 14+ it first checks, without reading the content, whether the clipboard contains a web URL. It reads the clipboard only if it does, so iOS shows its paste banner/prompt only in that case. If the user denies the paste prompt, the check is used up and they are not asked again.
+- It keeps only the `envoy_share_link_hash` and `envoy_lead_uuid` query parameters (stored in the Keychain and sent with pixel events). The rest of the clipboard content is discarded.
+- Pixel events logged while a check is in progress are held until it ends and then sent with the attribution it found, if any. Events logged when no check is in progress are sent right away, with whatever attribution is already stored. So if you start the check right after `initialize`, you can log `.appDownloaded` straight away; if you start it later (e.g. after consent), log `.appDownloaded` in its completion.
+- `Envoy.shared.checkDeferredLink` and `Envoy.shared.logPixelEvent` can be called from any thread (through the `EnvoyType` protocol they are main-actor isolated). The completion is called on the main thread.
+
+Disclose this clipboard access and the attribution data in your privacy policy and App Privacy details. The SDK ships a `PrivacyInfo.xcprivacy` privacy manifest that declares the data it collects and its use of `UserDefaults`.
+
+## 2.2 Initialize EnvoySDK with delegate (optional)
 To get inform when user did took screenshot add delegate right after SDK initialization and add EnvoyProtocol AppDelegate extension. 
 
 ```swift
@@ -183,22 +206,18 @@ Envoy.shared.getUserRemainingQuota(userId: "1") { response, error in
 
 Log a pixel event
 
-Configure a LogPixelEventRequest
+Configure a LogPixelEventRequest with one of the events: `.appDownloaded`, `.accountCreated`, `.trialActivated`, `.paymentSuccess` or `.custom(eventName:)`
 
 ```swift
-public struct LogPixelEventRequest: Encodable {
-    public struct Extra: Encodable {
-        let title: String?
-        let type: String?
-    }
-    
-    let eventName: String
-    let userId: String?
-    let sharerUserId: String?
-    let shareLinkHash: String?
-    let extra: Extra?
-}
+let request = LogPixelEventRequest(event: .appDownloaded)
+
+// With the optional sharer and extra details
+let paymentRequest = LogPixelEventRequest(event: .paymentSuccess,
+                                          sharerUserId: "sharer-id",
+                                          extra: .init(title: "Premium", type: "subscription"))
 ```
+
+The SDK adds the install attribution (`share_link_hash`, `lead_uuid`) stored by `checkDeferredLink` (see 2.1) when the event is sent.
 
 And log the event using the request
 

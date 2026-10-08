@@ -7,10 +7,16 @@
 import Foundation
 import Security
 
+protocol KeychainType {
+    @discardableResult
+    func set(_ value: String, forKey key: Keychain.Key) -> Bool
+    func value(forKey key: Keychain.Key) -> String?
+}
+
 /**
     Keychain wrapper
 */
-final class Keychain: Sendable {
+final class Keychain: KeychainType, Sendable {
     
     enum Key: String {
         case envoyShareLinkHash = "envoy.share.link.hash"

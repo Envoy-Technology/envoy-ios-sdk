@@ -18,9 +18,15 @@ let package = Package(
         .target(
             name: "EnvoySDK",
             resources: [
-                .process("Resources.xcassets")
+                .process("Resources.xcassets"),
+                .copy("PrivacyInfo.xcprivacy")
             ]
         ),
-
+        .testTarget(
+            name: "EnvoySDKTests",
+            dependencies: ["EnvoySDK"],
+            // Same tests as the CocoaPods repo, which builds in Swift 5 mode like many host apps.
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
     ]
 )
