@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import EnvoySDK
 
 final class PixelEventAttributionTests: XCTestCase {
@@ -61,9 +62,10 @@ final class PixelEventAttributionTests: XCTestCase {
     }
 
     @MainActor
-    func testCheckThatNeverFinishes_releasesQueuedEventAfterTimeout() {
+    func testCheckThatNeverFinishes_releasesHeldEventAtCheckTimeLimit() {
         fixture.pasteboard.content = TestLinks.full
-        let envoy = fixture.makeEnvoy(deferredLinkTimeout: 0.05)
+        fixture.checkTimeLimit = 0.05
+        let envoy = fixture.makeEnvoy()
         envoy.checkDeferredLink()
 
         let sent = expectation(description: "event sent")
@@ -99,6 +101,7 @@ final class PixelEventAttributionTests: XCTestCase {
         envoy.logPixelEvent(request: LogPixelEventRequest(event: .appDownloaded)) { _, _ in }
 
         fixture.pasteboard.finishDetection(with: .success(true))
+        drainMainQueue()
 
         XCTAssertEqual(fixture.pixelEventService.sentEventNames, ["app_downloaded", "account_created"])
     }
@@ -164,5 +167,96 @@ final class PixelEventAttributionTests: XCTestCase {
 
         XCTAssertEqual(fixture.pixelEventService.sentBodies.last?["share_link_hash"] as? String, "hash-1")
         XCTAssertEqual(fixture.pixelEventService.sentBodies.last?["lead_uuid"] as? String, "lead-1")
+    }
+
+    @MainActor
+    func testEventLoggedThroughSecondInstanceDuringCheck_isHeldForIt() {
+        // E.g. the host initializes Envoy again and logs through the new `Envoy.shared`.
+        fixture.pasteboard.content = TestLinks.full
+        fixture.makeEnvoy().checkDeferredLink()
+
+        fixture.makeEnvoy().logPixelEvent(request: LogPixelEventRequest(event: .appDownloaded)) { _, _ in }
+        XCTAssertTrue(fixture.pixelEventService.sentRequests.isEmpty, "Must wait for the deferred-link check")
+
+        fixture.pasteboard.finishDetection(with: .success(true))
+
+        XCTAssertEqual(fixture.pixelEventService.sentBodies.first?["share_link_hash"] as? String, "hash-1")
+    }
+
+    @MainActor
+    func testEventHeldPastCompletionTimeout_isSentWithLateAttribution() {
+        // E.g. detection takes longer while the clipboard content comes from another device.
+        fixture.pasteboard.content = TestLinks.full
+        fixture.completionTimeout = 0.05
+        let envoy = fixture.makeEnvoy()
+        let completed = expectation(description: "completion timed out")
+        envoy.checkDeferredLink { _ in completed.fulfill() }
+        envoy.logPixelEvent(request: LogPixelEventRequest(event: .appDownloaded)) { _, _ in }
+        wait(for: [completed], timeout: 2)
+        XCTAssertTrue(fixture.pixelEventService.sentRequests.isEmpty, "Must keep waiting for the check")
+
+        fixture.pasteboard.finishDetection(with: .success(true))
+
+        XCTAssertEqual(fixture.pixelEventService.sentBodies.first?["share_link_hash"] as? String, "hash-1")
+    }
+
+    @MainActor
+    func testAppEnteringBackground_sendsHeldEvents() {
+        // The app may be terminated in the background, so held events must not wait any longer.
+        fixture.pasteboard.content = TestLinks.full
+        let envoy = fixture.makeEnvoy()
+        envoy.checkDeferredLink()
+        envoy.logPixelEvent(request: LogPixelEventRequest(event: .appDownloaded)) { _, _ in }
+
+        fixture.notificationCenter.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+
+        XCTAssertEqual(fixture.pixelEventService.sentEventNames, ["app_downloaded"])
+    }
+
+    @MainActor
+    func testEventLoggedInBackgroundDuringCheck_isSentRightAway() {
+        fixture.pasteboard.content = TestLinks.full
+        let envoy = fixture.makeEnvoy()
+        envoy.checkDeferredLink()
+        fixture.notificationCenter.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+
+        envoy.logPixelEvent(request: LogPixelEventRequest(event: .paymentSuccess)) { _, _ in }
+
+        XCTAssertEqual(fixture.pixelEventService.sentEventNames, ["payment_success"])
+    }
+
+    func testEventLoggedRightAfterCheckRequestedOffMain_isHeldForIt() {
+        // E.g. a consent SDK calls back on a background queue, then the host logs on the main thread.
+        fixture.pasteboard.content = TestLinks.full
+        let envoy = fixture.makeEnvoy()
+        let requested = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            envoy.checkDeferredLink()
+            requested.signal()
+        }
+        // The call has returned off the main thread, but the main thread hasn't run anything since.
+        requested.wait()
+
+        envoy.logPixelEvent(request: LogPixelEventRequest(event: .appDownloaded)) { _, _ in }
+        XCTAssertTrue(fixture.pixelEventService.sentRequests.isEmpty, "Must wait for the requested check")
+
+        drainMainQueue()
+        fixture.pasteboard.finishDetection(with: .success(true))
+
+        XCTAssertEqual(fixture.pixelEventService.sentBodies.first?["share_link_hash"] as? String, "hash-1")
+    }
+
+    @MainActor
+    func testEventsLoggedOneByOne_readKeychainOnce() {
+        fixture.keychain.values[.envoyShareLinkHash] = "hash-0"
+        fixture.keychain.values[.envoyLeadUuid] = "lead-0"
+        let envoy = fixture.makeEnvoy()
+
+        for event in [PixelEvent.appDownloaded, .accountCreated, .trialActivated] {
+            envoy.logPixelEvent(request: LogPixelEventRequest(event: event)) { _, _ in }
+        }
+
+        XCTAssertEqual(fixture.pixelEventService.sentBodies.count, 3)
+        XCTAssertEqual(fixture.keychain.readCount, 2, "One read per Keychain key")
     }
 }

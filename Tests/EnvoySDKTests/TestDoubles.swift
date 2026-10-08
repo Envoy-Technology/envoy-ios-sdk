@@ -1,4 +1,4 @@
-import Foundation
+import XCTest
 @testable import EnvoySDK
 
 enum TestError: Error {
@@ -11,6 +11,8 @@ enum TestLinks {
 
 final class FakePasteboard: PasteboardType {
     var content: String?
+    /// Answers for the next detections, in order; after them `detectionResult` applies.
+    var nextDetectionResults: [Swift.Result<Bool, Error>] = []
     /// When nil, detection stays in progress until `finishDetection(with:)` is called.
     var detectionResult: Swift.Result<Bool, Error>?
     /// Runs while the content is being read, like the system paste prompt.
@@ -27,7 +29,9 @@ final class FakePasteboard: PasteboardType {
 
     func detectProbableWebURL(completion: @escaping (Swift.Result<Bool, Error>) -> Void) {
         detectionCount += 1
-        if let detectionResult = detectionResult {
+        if !nextDetectionResults.isEmpty {
+            completion(nextDetectionResults.removeFirst())
+        } else if let detectionResult = detectionResult {
             completion(detectionResult)
         } else {
             pendingDetections.append(completion)
@@ -87,29 +91,56 @@ final class FakePixelEventService: LogPixelEventServiceType {
     }
 }
 
-/// Fakes shared by one test, plus an isolated UserDefaults suite.
+/// Fakes for one test, which plays the role of one app process, plus an isolated UserDefaults suite.
 final class EnvoyFixture {
     let pasteboard = FakePasteboard()
     let keychain = FakeKeychain()
     let pixelEventService = FakePixelEventService()
+    let notificationCenter = NotificationCenter()
     let userDefaults: UserDefaults
+    var isApplicationActive = true
+    var installDate: Date? = Date()
+    var completionTimeout: TimeInterval = 10
+    var checkTimeLimit: TimeInterval = 10
+    var failureRetryDelay: TimeInterval = 0.01
     private let suiteName = "EnvoySDKTests.\(UUID().uuidString)"
 
     init() {
         userDefaults = UserDefaults(suiteName: suiteName)!
     }
 
-    /// Each call is like a new app launch: fresh Envoy, same device state.
-    func makeEnvoy(deferredLinkTimeout: TimeInterval = 10) -> Envoy {
+    /// The process-wide state, created on first use so a test can change the settings above first.
+    private(set) lazy var deferredLinks = DeferredLinkCoordinator(
+        pasteboard: pasteboard,
+        keychain: keychain,
+        userDefaults: userDefaults,
+        notificationCenter: notificationCenter,
+        isApplicationActive: { [weak self] in self?.isApplicationActive ?? false },
+        installDate: { [weak self] in self?.installDate },
+        completionTimeout: completionTimeout,
+        checkTimeLimit: checkTimeLimit,
+        failureRetryDelay: failureRetryDelay
+    )
+
+    /// Each call is like another `Envoy.initialize` in the same process.
+    func makeEnvoy() -> Envoy {
         Envoy(apiKey: "test-api-key",
-              pasteboard: pasteboard,
-              keychain: keychain,
-              userDefaults: userDefaults,
               pixelEventService: pixelEventService,
-              deferredLinkTimeout: deferredLinkTimeout)
+              deferredLinks: deferredLinks)
     }
 
     func removeUserDefaults() {
         userDefaults.removePersistentDomain(forName: suiteName)
+    }
+}
+
+extension XCTestCase {
+    /// Runs the blocks already queued on the main queue, such as completions called asynchronously.
+    func drainMainQueue() {
+        let drained = expectation(description: "main queue drained")
+        DispatchQueue.main.async {
+            drained.fulfill()
+        }
+        wait(for: [drained], timeout: 2)
     }
 }

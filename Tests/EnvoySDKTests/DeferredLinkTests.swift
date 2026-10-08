@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import EnvoySDK
 
 final class DeferredLinkTests: XCTestCase {
@@ -15,7 +16,7 @@ final class DeferredLinkTests: XCTestCase {
         super.tearDown()
     }
 
-    // MARK: Behavior that must survive the rework
+    // MARK: Reading the link
 
     @MainActor
     func testLinkWithBothParameters_storesThemAndReportsTrue() {
@@ -24,10 +25,24 @@ final class DeferredLinkTests: XCTestCase {
 
         var found: Bool?
         fixture.makeEnvoy().checkDeferredLink { found = $0 }
+        drainMainQueue()
 
         XCTAssertEqual(found, true)
         XCTAssertEqual(fixture.keychain.values[.envoyShareLinkHash], "hash-1")
         XCTAssertEqual(fixture.keychain.values[.envoyLeadUuid], "lead-1")
+    }
+
+    @MainActor
+    func testLinkWithSurroundingWhitespace_isStored() {
+        fixture.pasteboard.content = " \(TestLinks.full)\n"
+        fixture.pasteboard.detectionResult = .success(true)
+
+        var found: Bool?
+        fixture.makeEnvoy().checkDeferredLink { found = $0 }
+        drainMainQueue()
+
+        XCTAssertEqual(found, true)
+        XCTAssertEqual(fixture.keychain.values[.envoyShareLinkHash], "hash-1")
     }
 
     @MainActor
@@ -37,6 +52,7 @@ final class DeferredLinkTests: XCTestCase {
 
         var found: Bool?
         fixture.makeEnvoy().checkDeferredLink { found = $0 }
+        drainMainQueue()
 
         XCTAssertEqual(found, false)
         XCTAssertEqual(fixture.pasteboard.readCount, 0)
@@ -44,7 +60,7 @@ final class DeferredLinkTests: XCTestCase {
     }
 
     @MainActor
-    func testNoWebURLDetected_endsCheckForLaterLaunches() {
+    func testNoWebURLDetected_endsCheckForLaterCalls() {
         fixture.pasteboard.detectionResult = .success(false)
         fixture.makeEnvoy().checkDeferredLink()
 
@@ -52,6 +68,7 @@ final class DeferredLinkTests: XCTestCase {
         fixture.pasteboard.detectionResult = .success(true)
         var found: Bool?
         fixture.makeEnvoy().checkDeferredLink { found = $0 }
+        drainMainQueue()
 
         XCTAssertEqual(found, false)
         XCTAssertEqual(fixture.pasteboard.detectionCount, 1)
@@ -70,30 +87,109 @@ final class DeferredLinkTests: XCTestCase {
         fixture.pasteboard.content = TestLinks.full
         var second: Bool?
         envoy.checkDeferredLink { second = $0 }
+        drainMainQueue()
 
         XCTAssertEqual(first, false)
         XCTAssertEqual(second, false)
         XCTAssertEqual(fixture.pasteboard.readCount, 1)
     }
 
-    // MARK: New behavior
+    @MainActor
+    func testHostsOwnIsFreshInstallKey_doesNotDisableTheCheck() {
+        // A host app that uses the same generic key for its own onboarding.
+        fixture.userDefaults.set(false, forKey: "isFreshInstall")
+        fixture.pasteboard.content = TestLinks.full
+        fixture.pasteboard.detectionResult = .success(true)
+
+        var found: Bool?
+        fixture.makeEnvoy().checkDeferredLink { found = $0 }
+        drainMainQueue()
+
+        XCTAssertEqual(found, true)
+    }
+
+    // MARK: Install age
 
     @MainActor
-    func testDetectionFailure_allowsRetryOnLaterCall() {
+    func testInstalledLongAgo_neverTouchesClipboard() {
+        // E.g. the host adds the call in a later app version, or consent comes weeks later.
+        fixture.installDate = Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)
         fixture.pasteboard.content = TestLinks.full
-        fixture.pasteboard.detectionResult = .failure(TestError.detectionFailed)
+        fixture.pasteboard.detectionResult = .success(true)
         let envoy = fixture.makeEnvoy()
 
         var first: Bool?
         envoy.checkDeferredLink { first = $0 }
-        fixture.pasteboard.detectionResult = .success(true)
         var second: Bool?
         envoy.checkDeferredLink { second = $0 }
+        drainMainQueue()
 
         XCTAssertEqual(first, false)
-        XCTAssertEqual(second, true)
+        XCTAssertEqual(second, false)
+        XCTAssertEqual(fixture.pasteboard.detectionCount, 0)
+        XCTAssertEqual(fixture.pasteboard.readCount, 0)
+    }
+
+    @MainActor
+    func testInstallDateUnknown_checksAsUsual() {
+        fixture.installDate = nil
+        fixture.pasteboard.content = TestLinks.full
+        fixture.pasteboard.detectionResult = .success(true)
+
+        var found: Bool?
+        fixture.makeEnvoy().checkDeferredLink { found = $0 }
+        drainMainQueue()
+
+        XCTAssertEqual(found, true)
+    }
+
+    // MARK: App state
+
+    @MainActor
+    func testAppNotActive_waitsForActivationBeforeDetecting() {
+        fixture.isApplicationActive = false
+        fixture.pasteboard.content = TestLinks.full
+        fixture.pasteboard.detectionResult = .success(true)
+        let envoy = fixture.makeEnvoy()
+
+        var found: Bool?
+        envoy.checkDeferredLink { found = $0 }
+        drainMainQueue()
+        XCTAssertEqual(fixture.pasteboard.detectionCount, 0)
+        XCTAssertNil(found)
+
+        fixture.isApplicationActive = true
+        fixture.notificationCenter.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        drainMainQueue()
+
+        XCTAssertEqual(found, true)
         XCTAssertEqual(fixture.keychain.values[.envoyShareLinkHash], "hash-1")
     }
+
+    @MainActor
+    func testAppInactiveWhenURLIsDetected_readsOnlyAfterActivation() {
+        // The clipboard can't be read while the app is in the background, so it must not use up the check.
+        fixture.pasteboard.content = TestLinks.full
+        let envoy = fixture.makeEnvoy()
+        var found: Bool?
+        envoy.checkDeferredLink { found = $0 }
+
+        fixture.isApplicationActive = false
+        fixture.pasteboard.finishDetection(with: .success(true))
+        drainMainQueue()
+        XCTAssertEqual(fixture.pasteboard.readCount, 0)
+        XCTAssertNil(found)
+
+        fixture.isApplicationActive = true
+        fixture.pasteboard.detectionResult = .success(true)
+        fixture.notificationCenter.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        drainMainQueue()
+
+        XCTAssertEqual(found, true)
+        XCTAssertEqual(fixture.pasteboard.readCount, 1)
+    }
+
+    // MARK: Check in progress
 
     @MainActor
     func testSecondCallDuringCheck_waitsForSameResult() {
@@ -104,13 +200,35 @@ final class DeferredLinkTests: XCTestCase {
         var second: Bool?
         envoy.checkDeferredLink { first = $0 }
         envoy.checkDeferredLink { second = $0 }
+        drainMainQueue()
         XCTAssertNil(second, "Must not answer before the check in progress has a result")
 
         fixture.pasteboard.finishDetection(with: .success(true))
+        drainMainQueue()
 
         XCTAssertEqual(first, true)
         XCTAssertEqual(second, true)
         XCTAssertEqual(fixture.pasteboard.detectionCount, 1)
+    }
+
+    @MainActor
+    func testSecondInstanceCheckingDuringFirstOne_getsTheSameResult() {
+        // E.g. the host initializes Envoy in both AppDelegate and SceneDelegate.
+        fixture.pasteboard.content = TestLinks.full
+        let first = fixture.makeEnvoy()
+        let second = fixture.makeEnvoy()
+
+        var firstFound: Bool?
+        var secondFound: Bool?
+        first.checkDeferredLink { firstFound = $0 }
+        second.checkDeferredLink { secondFound = $0 }
+        fixture.pasteboard.finishDetection(with: .success(true))
+        drainMainQueue()
+
+        XCTAssertEqual(firstFound, true)
+        XCTAssertEqual(secondFound, true)
+        XCTAssertEqual(fixture.pasteboard.detectionCount, 1)
+        XCTAssertEqual(fixture.pasteboard.readCount, 1)
     }
 
     @MainActor
@@ -123,24 +241,44 @@ final class DeferredLinkTests: XCTestCase {
         envoy?.checkDeferredLink { found = $0 }
         envoy = nil
         fixture.pasteboard.finishDetection(with: .success(true))
+        drainMainQueue()
 
         XCTAssertEqual(found, true)
         XCTAssertEqual(fixture.keychain.values[.envoyShareLinkHash], "hash-1")
     }
 
     @MainActor
-    func testTwoInstancesCheckingAtOnce_readPasteboardOnce() {
-        // E.g. the host initializes Envoy in both AppDelegate and SceneDelegate.
+    func testCallMadeWhileClipboardIsRead_getsTheResult() {
+        // E.g. the host calls again while the paste prompt is up.
         fixture.pasteboard.content = TestLinks.full
-        let first = fixture.makeEnvoy()
-        let second = fixture.makeEnvoy()
+        let envoy = fixture.makeEnvoy()
+        var joined: Bool?
+        fixture.pasteboard.onRead = {
+            envoy.checkDeferredLink { joined = $0 }
+        }
 
-        first.checkDeferredLink()
-        second.checkDeferredLink()
+        envoy.checkDeferredLink()
         fixture.pasteboard.finishDetection(with: .success(true))
+        drainMainQueue()
 
-        XCTAssertEqual(fixture.pasteboard.readCount, 1)
-        XCTAssertEqual(fixture.keychain.values[.envoyShareLinkHash], "hash-1")
+        XCTAssertEqual(joined, true)
+    }
+
+    // MARK: Completion
+
+    @MainActor
+    func testCompletion_isNeverCalledBeforeCheckDeferredLinkReturns() {
+        fixture.pasteboard.detectionResult = .success(false)
+        let envoy = fixture.makeEnvoy()
+        envoy.checkDeferredLink()
+        drainMainQueue()
+
+        var found: Bool?
+        envoy.checkDeferredLink { found = $0 }
+        XCTAssertNil(found)
+
+        drainMainQueue()
+        XCTAssertEqual(found, false)
     }
 
     func testCheckCalledOffMainThread_completesOnMainThread() {
@@ -164,9 +302,10 @@ final class DeferredLinkTests: XCTestCase {
     }
 
     @MainActor
-    func testCheckThatNeverFinishes_completesWithFalseAfterTimeout() {
+    func testCheckThatNeverFinishes_completesWithFalseAfterCompletionTimeout() {
         fixture.pasteboard.content = TestLinks.full
-        let envoy = fixture.makeEnvoy(deferredLinkTimeout: 0.05)
+        fixture.completionTimeout = 0.05
+        let envoy = fixture.makeEnvoy()
 
         let completed = expectation(description: "check completed")
         var found: Bool?
@@ -180,59 +319,10 @@ final class DeferredLinkTests: XCTestCase {
     }
 
     @MainActor
-    func testDetectionAnsweringAfterTimeout_isIgnoredAndLaterCallRetries() {
-        fixture.pasteboard.content = TestLinks.full
-        let envoy = fixture.makeEnvoy(deferredLinkTimeout: 0.05)
-        let timedOut = expectation(description: "check timed out")
-        envoy.checkDeferredLink { _ in timedOut.fulfill() }
-        wait(for: [timedOut], timeout: 2)
-
-        fixture.pasteboard.finishDetection(with: .success(true))
-        XCTAssertEqual(fixture.pasteboard.readCount, 0)
-
-        fixture.pasteboard.detectionResult = .success(true)
-        var found: Bool?
-        envoy.checkDeferredLink { found = $0 }
-        XCTAssertEqual(found, true)
-    }
-
-    @MainActor
-    func testLateAnswerToTimedOutCheck_doesNotEndTheRetry() {
-        fixture.pasteboard.content = TestLinks.full
-        let envoy = fixture.makeEnvoy(deferredLinkTimeout: 0.05)
-        let timedOut = expectation(description: "first check timed out")
-        envoy.checkDeferredLink { _ in timedOut.fulfill() }
-        wait(for: [timedOut], timeout: 2)
-
-        var retryResult: Bool?
-        envoy.checkDeferredLink { retryResult = $0 }
-        fixture.pasteboard.finishOldestDetection(with: .failure(TestError.detectionFailed))
-        XCTAssertNil(retryResult, "A late answer to the first check must not end the retry")
-
-        fixture.pasteboard.finishOldestDetection(with: .success(true))
-        XCTAssertEqual(retryResult, true)
-    }
-
-    @MainActor
-    func testCallMadeWhileClipboardIsRead_getsTheResult() {
-        // E.g. the host calls again while the paste prompt is up.
-        fixture.pasteboard.content = TestLinks.full
-        let envoy = fixture.makeEnvoy()
-        var joined: Bool?
-        fixture.pasteboard.onRead = {
-            envoy.checkDeferredLink { joined = $0 }
-        }
-
-        envoy.checkDeferredLink()
-        fixture.pasteboard.finishDetection(with: .success(true))
-
-        XCTAssertEqual(joined, true)
-    }
-
-    @MainActor
     func testDetectionCallbackDroppedAfterEnvoyIsReleased_stillCompletesAfterTimeout() {
         fixture.pasteboard.content = TestLinks.full
-        var envoy: Envoy? = fixture.makeEnvoy(deferredLinkTimeout: 0.05)
+        fixture.completionTimeout = 0.05
+        var envoy: Envoy? = fixture.makeEnvoy()
         let completed = expectation(description: "check completed")
         var found: Bool?
         envoy?.checkDeferredLink {
@@ -245,5 +335,103 @@ final class DeferredLinkTests: XCTestCase {
         wait(for: [completed], timeout: 2)
 
         XCTAssertEqual(found, false)
+    }
+
+    // MARK: Failures and late answers
+
+    @MainActor
+    func testDetectionFailingOnce_isRetriedWithinTheSameCheck() {
+        fixture.pasteboard.content = TestLinks.full
+        fixture.pasteboard.nextDetectionResults = [.failure(TestError.detectionFailed)]
+        fixture.pasteboard.detectionResult = .success(true)
+
+        let completed = expectation(description: "check completed")
+        var found: Bool?
+        fixture.makeEnvoy().checkDeferredLink {
+            found = $0
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 2)
+
+        XCTAssertEqual(found, true)
+        XCTAssertEqual(fixture.pasteboard.detectionCount, 2)
+    }
+
+    @MainActor
+    func testDetectionFailingTwice_allowsRetryOnLaterCall() {
+        fixture.pasteboard.content = TestLinks.full
+        fixture.pasteboard.detectionResult = .failure(TestError.detectionFailed)
+        let envoy = fixture.makeEnvoy()
+
+        let completed = expectation(description: "first check completed")
+        var first: Bool?
+        envoy.checkDeferredLink {
+            first = $0
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 2)
+
+        fixture.pasteboard.detectionResult = .success(true)
+        var second: Bool?
+        envoy.checkDeferredLink { second = $0 }
+        drainMainQueue()
+
+        XCTAssertEqual(first, false)
+        XCTAssertEqual(second, true)
+        XCTAssertEqual(fixture.keychain.values[.envoyShareLinkHash], "hash-1")
+    }
+
+    @MainActor
+    func testDetectionAnsweringAfterCompletionTimeout_stillStoresTheLink() {
+        // E.g. detection takes longer while the clipboard content comes from another device.
+        fixture.pasteboard.content = TestLinks.full
+        fixture.completionTimeout = 0.05
+        let envoy = fixture.makeEnvoy()
+        let completed = expectation(description: "completion timed out")
+        envoy.checkDeferredLink { _ in completed.fulfill() }
+        wait(for: [completed], timeout: 2)
+
+        fixture.pasteboard.finishDetection(with: .success(true))
+
+        XCTAssertEqual(fixture.keychain.values[.envoyShareLinkHash], "hash-1")
+    }
+
+    @MainActor
+    func testDetectionAnsweringAfterCheckTimeLimit_isIgnoredAndLaterCallRetries() {
+        fixture.pasteboard.content = TestLinks.full
+        fixture.checkTimeLimit = 0.2
+        let envoy = fixture.makeEnvoy()
+        let ended = expectation(description: "check ended")
+        envoy.checkDeferredLink { _ in ended.fulfill() }
+        wait(for: [ended], timeout: 2)
+
+        fixture.pasteboard.finishDetection(with: .success(true))
+        XCTAssertEqual(fixture.pasteboard.readCount, 0)
+
+        fixture.pasteboard.detectionResult = .success(true)
+        var found: Bool?
+        envoy.checkDeferredLink { found = $0 }
+        drainMainQueue()
+        XCTAssertEqual(found, true)
+    }
+
+    @MainActor
+    func testLateAnswerToCheckPastItsTimeLimit_doesNotEndTheRetry() {
+        fixture.pasteboard.content = TestLinks.full
+        fixture.checkTimeLimit = 0.2
+        let envoy = fixture.makeEnvoy()
+        let ended = expectation(description: "first check ended")
+        envoy.checkDeferredLink { _ in ended.fulfill() }
+        wait(for: [ended], timeout: 2)
+
+        var retryResult: Bool?
+        envoy.checkDeferredLink { retryResult = $0 }
+        fixture.pasteboard.finishOldestDetection(with: .success(false))
+        drainMainQueue()
+        XCTAssertNil(retryResult, "A late answer to the first check must not end the retry")
+
+        fixture.pasteboard.finishOldestDetection(with: .success(true))
+        drainMainQueue()
+        XCTAssertEqual(retryResult, true)
     }
 }

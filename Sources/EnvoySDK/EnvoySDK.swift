@@ -54,12 +54,6 @@ public protocol EnvoyType {
 }
 
 public extension EnvoyType {
-    /// Default for conforming types written before 0.1.0 (e.g. test doubles): reports no link.
-    @MainActor
-    func checkDeferredLink(completion: ((Bool) -> Void)?) {
-        completion?(false)
-    }
-
     @MainActor
     func checkDeferredLink() {
         checkDeferredLink(completion: nil)
@@ -69,8 +63,6 @@ public extension EnvoyType {
 @available(iOS 13.0, *)
 public final class Envoy: ObservableObject {
     private enum Constants {
-        static let envoyShareLinkHash = "envoy_share_link_hash"
-        static let envoyLeadUuid = "envoy_lead_uuid"
         static let devEnvironment = "https://dev-api.envoy.is/partner/"
         static let prodEnvironment = "https://api.envoy.is/partner/"
     }
@@ -81,23 +73,8 @@ public final class Envoy: ObservableObject {
     fileprivate let webClient: WebClient
     fileprivate var notificationObserver: NSObjectProtocol?
 
-    private let pasteboard: PasteboardType
-    private let keychain: KeychainType
-    private let userDefaults: UserDefaults
     private let pixelEventService: LogPixelEventServiceType
-    private let deferredLinkTimeout: TimeInterval
-
-    // State of the deferred-link check and pixel events, touched only on the main thread.
-    /// Non-nil while a deferred-link check is in progress; holds the completions waiting for its result.
-    private var deferredLinkCompletions: [(Bool) -> Void]?
-    /// Tells the check in progress apart from a late answer to a check that already timed out.
-    private var deferredLinkCheckID = 0
-    private var deferredLinkCheckTimeout: DispatchWorkItem?
-    /// Pixel events logged during a deferred-link check, sent once it ends.
-    private var pendingPixelEvents: [PendingPixelEvent] = []
-
-    private typealias PendingPixelEvent = (request: LogPixelEventRequest,
-                                           completion: (EmptyResponse?, WebError?) -> ())
+    private let deferredLinks: DeferredLinkCoordinator
 
     nonisolated(unsafe) public static var shared: Envoy!
     public var delegate: EnvoyProtocol?
@@ -107,154 +84,31 @@ public final class Envoy: ObservableObject {
     }
 
     init(apiKey: String,
-         pasteboard: PasteboardType = SystemPasteboard(),
-         keychain: KeychainType = Keychain.standard,
-         userDefaults: UserDefaults = .standard,
          pixelEventService: LogPixelEventServiceType? = nil,
-         deferredLinkTimeout: TimeInterval = 3) {
+         deferredLinks: DeferredLinkCoordinator = .shared) {
         self.apiKey = apiKey
         self.apiUrl = Constants.prodEnvironment
 
         self.webClient = WebClient(baseURL: self.apiUrl)
-        self.pasteboard = pasteboard
-        self.keychain = keychain
-        self.userDefaults = userDefaults
         self.pixelEventService = pixelEventService
             ?? LogPixelEventService(client: webClient, apiKey: apiKey)
-        self.deferredLinkTimeout = deferredLinkTimeout
+        self.deferredLinks = deferredLinks
         self.setupScreenshotNotification()
     }
 
     // MARK: Deferred link
-    /// Reads the clipboard once per install
+    /// Reads the clipboard once per install, within a day of installing,
     /// and returns `true` in completion when Envoy link parameters were found and stored.
-    /// On iOS 14+ the clipboard is read only when it contains a web URL, so iOS shows the paste prompt only then.
-    /// Calls made while a check is in progress get its result. If the system cannot tell whether
-    /// the clipboard holds a URL, or doesn't answer in time, the check is not used up and a later call tries again.
+    /// On iOS 14+ the clipboard is read only when it contains a web URL, so iOS shows the paste prompt only then,
+    /// and only while the app is active.
+    /// Calls made while a check is in progress, from any `Envoy` instance, get its result.
+    /// If the check can't finish (the system fails twice or doesn't answer within 30 seconds),
+    /// it is not used up and a later call tries again.
     /// Pixel events logged while the check runs are sent after it, so they carry the attribution.
-    /// Can be called from any thread; `completion` is called on the main thread.
+    /// Can be called from any thread; `completion` is called on the main thread, never before this returns,
+    /// and at most 3 seconds later.
     nonisolated public func checkDeferredLink(completion: ((Bool) -> Void)? = nil) {
-        onMainThread {
-            self.startDeferredLinkCheck(completion: completion)
-        }
-    }
-
-    private func startDeferredLinkCheck(completion: ((Bool) -> Void)?) {
-        if deferredLinkCompletions != nil {
-            deferredLinkCompletions?.append { completion?($0) }
-            return
-        }
-        guard userDefaults.isFreshInstall else {
-            completion?(false)
-            return
-        }
-        deferredLinkCompletions = [{ completion?($0) }]
-        deferredLinkCheckID += 1
-        let checkID = deferredLinkCheckID
-
-        // Strong captures: the check must finish even if this instance is replaced meanwhile,
-        // and the timeout bounds how long it is kept alive.
-        let timeout = DispatchWorkItem {
-            self.finishDeferredLinkCheck(checkID, detection: .failure(DeferredLinkCheckTimeout()))
-        }
-        deferredLinkCheckTimeout = timeout
-        DispatchQueue.main.asyncAfter(deadline: .now() + deferredLinkTimeout, execute: timeout)
-
-        pasteboard.detectProbableWebURL { result in
-            self.finishDeferredLinkCheck(checkID, detection: result)
-        }
-    }
-
-    private func finishDeferredLinkCheck(_ checkID: Int, detection: Swift.Result<Bool, Error>) {
-        guard checkID == deferredLinkCheckID, deferredLinkCompletions != nil else {
-            return
-        }
-        deferredLinkCheckTimeout?.cancel()
-        deferredLinkCheckTimeout = nil
-
-        let found: Bool
-        switch detection {
-        case .failure:
-            // Keep the check available so a later call can retry.
-            found = false
-        case .success(false):
-            userDefaults.set(isFreshInstall: false)
-            found = false
-        case .success(true) where !userDefaults.isFreshInstall:
-            // Another Envoy instance finished its own check meanwhile and already read the clipboard.
-            found = false
-        case .success(true):
-            // Used up before reading, so a user who denies the paste prompt is not asked again.
-            userDefaults.set(isFreshInstall: false)
-            found = storeDeferredLinkParameters(from: pasteboard.string)
-        }
-
-        // Taken only now, so a call made while the clipboard was read (e.g. with the paste prompt up) gets the result.
-        let completions = deferredLinkCompletions ?? []
-        deferredLinkCompletions = nil
-        // Events held during the check go before anything logged from a completion.
-        sendPendingPixelEvents()
-        completions.forEach { $0(found) }
-    }
-
-    private func storeDeferredLinkParameters(from clipboardLink: String?) -> Bool {
-        guard let clipboardLink = clipboardLink,
-              let url = URL(string: clipboardLink),
-              let components = URLComponents(url: url, resolvingAgainstBaseURL: true),
-              let parameters = components.queryItems else {
-            return false
-        }
-        var didStore = false
-        for parameter in parameters {
-            if parameter.name == Constants.envoyShareLinkHash,
-               let value = parameter.value {
-                keychain.set(value, forKey: .envoyShareLinkHash)
-                didStore = true
-            } else if parameter.name == Constants.envoyLeadUuid,
-               let value = parameter.value {
-                keychain.set(value, forKey: .envoyLeadUuid)
-                didStore = true
-            }
-        }
-        return didStore
-    }
-
-    // MARK: Pixel events
-    private func sendPixelEvents(_ events: [PendingPixelEvent]) {
-        guard !events.isEmpty else { return }
-        // Read once per batch, and fresh each time: another Envoy instance may have stored a link meanwhile.
-        let attribution = LogPixelEventRequest.Attribution(
-            shareLinkHash: keychain.value(forKey: .envoyShareLinkHash),
-            leadUuid: keychain.value(forKey: .envoyLeadUuid)
-        )
-        events.forEach {
-            pixelEventService.logPixelEvent(request: $0.request.attributed(with: attribution),
-                                            completion: $0.completion)
-        }
-    }
-
-    private func sendPendingPixelEvents() {
-        let events = pendingPixelEvents
-        pendingPixelEvents = []
-        sendPixelEvents(events)
-    }
-
-    // MARK: Threading
-    private struct DeferredLinkCheckTimeout: Error {}
-
-    /// Hosts compiled in Swift 5 mode can end up calling the main-actor API off the main thread
-    /// (e.g. from another SDK's callback) without a compiler error,
-    /// so the deferred-link and pixel-event state is touched on the main thread only.
-    private func onMainThread(_ work: @escaping () -> Void) {
-        if Thread.isMainThread {
-            work()
-        } else {
-            // Handed off to the main queue and only ever run there.
-            nonisolated(unsafe) let work = work
-            DispatchQueue.main.async {
-                work()
-            }
-        }
+        deferredLinks.checkDeferredLink(completion: completion)
     }
 
     // MARK: Screenshot capture
@@ -348,13 +202,7 @@ extension Envoy: EnvoyType {
     /// Can be called from any thread.
     nonisolated public func logPixelEvent(request: LogPixelEventRequest,
                                           completion: @escaping (EmptyResponse?, WebError?) -> ()) {
-        onMainThread {
-            if self.deferredLinkCompletions != nil {
-                self.pendingPixelEvents.append((request, completion))
-            } else {
-                self.sendPixelEvents([(request, completion)])
-            }
-        }
+        deferredLinks.logPixelEvent(request, service: pixelEventService, completion: completion)
     }
     
     public func getUserRewards(userId: String,
