@@ -96,8 +96,24 @@ final class DeferredLinkTests: XCTestCase {
 
     @MainActor
     func testHostsOwnIsFreshInstallKey_doesNotDisableTheCheck() {
-        // A host app that uses the same generic key for its own onboarding.
+        // A host app that uses the same generic key, e.g. during onboarding after launch.
+        let envoy = fixture.makeEnvoy()
         fixture.userDefaults.set(false, forKey: "isFreshInstall")
+        fixture.pasteboard.content = TestLinks.full
+        fixture.pasteboard.detectionResult = .success(true)
+
+        var found: Bool?
+        envoy.checkDeferredLink { found = $0 }
+        drainMainQueue()
+
+        XCTAssertEqual(found, true)
+    }
+
+    @MainActor
+    func testUpdateFromSDKThatAlreadyReadClipboard_neverChecksAgain() {
+        // SDKs before 0.1.0 read the clipboard at the first launch and stored "isFreshInstall" = false.
+        fixture.userDefaults.set(false, forKey: "isFreshInstall")
+        fixture.installDate = Date(timeIntervalSinceNow: -60 * 60)
         fixture.pasteboard.content = TestLinks.full
         fixture.pasteboard.detectionResult = .success(true)
 
@@ -105,7 +121,9 @@ final class DeferredLinkTests: XCTestCase {
         fixture.makeEnvoy().checkDeferredLink { found = $0 }
         drainMainQueue()
 
-        XCTAssertEqual(found, true)
+        XCTAssertEqual(found, false)
+        XCTAssertEqual(fixture.pasteboard.detectionCount, 0)
+        XCTAssertEqual(fixture.pasteboard.readCount, 0)
     }
 
     // MARK: Install age

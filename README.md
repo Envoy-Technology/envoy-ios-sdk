@@ -32,6 +32,7 @@ func application(_ application: UIApplication, didFinishLaunchingWithOptions lau
 
 > **Upgrading from 0.0.x:**
 > - `Envoy.initialize(apiKey:)` no longer reads the clipboard. If you don't call `checkDeferredLink`, installs are not attributed to the share link that brought the user: pixel events are sent without `share_link_hash` and `lead_uuid`.
+> - If an earlier SDK version already read the clipboard on this install, `checkDeferredLink` doesn't read it again, so users who update don't see the paste prompt a second time.
 > - `EnvoyType` has a new requirement, `checkDeferredLink(completion:)`. Types that conform to it, such as test doubles or wrappers, must implement it; a wrapper should forward it to `Envoy.shared`.
 
 Envoy landing pages copy the share link to the clipboard before redirecting to the App Store. To attribute the install to that link, call `checkDeferredLink` after initialization, and log `.appDownloaded` once per install right after that call. The SDK doesn't read the clipboard on its own, so you decide when it happens. If you need user consent first (e.g. under GDPR/ePrivacy in the EU), call it right after consent is given.
@@ -48,7 +49,7 @@ Envoy.shared.logPixelEvent(request: LogPixelEventRequest(event: .appDownloaded))
 Don't log `.appDownloaded` in the completion: it is called on every call of `checkDeferredLink`, with `false` once the check has been used up, so the event would be sent on every launch.
 
 What it does:
-- Runs once per install, and only within a day of installing. Later, the clipboard no longer relates to the install, so it isn't touched and the check completes with `false`. This also covers apps that add the call in a later version, or get consent much later.
+- Runs once per install. It works from the first launch; once more than a day has passed since install, the clipboard no longer relates to the install, so it isn't touched and the check completes with `false`. This also covers apps that add the call in a later version, or get consent much later.
 - On iOS 14+ it first checks, without reading the content, whether the clipboard contains a web URL. It reads the clipboard only if it does, so iOS shows its paste banner/prompt only in that case. If the user denies the paste prompt, the check is used up and they are not asked again.
 - It works with the clipboard only while the app is active, and waits for that if needed.
 - It keeps only the `envoy_share_link_hash` and `envoy_lead_uuid` query parameters (stored in the Keychain and sent with pixel events). The rest of the clipboard content is discarded.

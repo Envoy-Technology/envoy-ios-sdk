@@ -73,6 +73,7 @@ final class DeferredLinkCoordinator: @unchecked Sendable {
         self.completionTimeout = completionTimeout
         self.checkTimeLimit = checkTimeLimit
         self.failureRetryDelay = failureRetryDelay
+        userDefaults.migrateDeferredLinkCheckDone()
         observeLifecycle()
     }
 
