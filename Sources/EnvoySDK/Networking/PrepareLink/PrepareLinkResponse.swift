@@ -1,7 +1,7 @@
 import Foundation
 
 public struct PrepLinkResponse: Codable {
-    let msg: String
-    let type: String
-    let loc: [String]
+    public let msg: String
+    public let type: String
+    public let loc: [String]
 }
