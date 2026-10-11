@@ -30,7 +30,7 @@ func application(_ application: UIApplication, didFinishLaunchingWithOptions lau
 
 ## 2.1 Check deferred link (required for install attribution)
 
-> **Upgrading from 0.0.x:**
+> **Upgrading from 0.0.15 or earlier:**
 > - `Envoy.initialize(apiKey:)` no longer reads the clipboard. If you don't call `checkDeferredLink`, installs are not attributed to the share link that brought the user: pixel events are sent without `share_link_hash` and `lead_uuid`.
 > - If an earlier SDK version already read the clipboard on this install, `checkDeferredLink` doesn't read it again, so users who update don't see the paste prompt a second time.
 > - `EnvoyType` has a new requirement, `checkDeferredLink(completion:)`. Types that conform to it, such as test doubles or wrappers, must implement it; a wrapper should forward it to `Envoy.shared`.

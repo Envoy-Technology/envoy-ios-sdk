@@ -111,7 +111,7 @@ final class DeferredLinkTests: XCTestCase {
 
     @MainActor
     func testUpdateFromSDKThatAlreadyReadClipboard_neverChecksAgain() {
-        // SDKs before 0.1.0 read the clipboard at the first launch and stored "isFreshInstall" = false.
+        // SDKs before 0.0.16 read the clipboard at the first launch and stored "isFreshInstall" = false.
         fixture.userDefaults.set(false, forKey: "isFreshInstall")
         fixture.installDate = Date(timeIntervalSinceNow: -60 * 60)
         fixture.pasteboard.content = TestLinks.full
