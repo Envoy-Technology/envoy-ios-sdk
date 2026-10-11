@@ -28,7 +28,44 @@ func application(_ application: UIApplication, didFinishLaunchingWithOptions lau
 }
 ```
 
-## 2.1 Initialize EnvoySDK with delegate (optional)
+## 2.1 Check deferred link (required for install attribution)
+
+> **Upgrading from 0.0.15 or earlier:**
+> - `Envoy.initialize(apiKey:)` no longer reads the clipboard. If you don't call `checkDeferredLink`, installs are not attributed to the share link that brought the user: pixel events are sent without `share_link_hash` and `lead_uuid`.
+> - If an earlier SDK version already read the clipboard on this install, `checkDeferredLink` doesn't read it again, so users who update don't see the paste prompt a second time.
+> - `EnvoyType` has a new requirement, `checkDeferredLink(completion:)`. Types that conform to it, such as test doubles or wrappers, must implement it; a wrapper should forward it to `Envoy.shared`.
+
+Envoy landing pages copy the share link to the clipboard before redirecting to the App Store. To attribute the install to that link, call `checkDeferredLink` after initialization, and log `.appDownloaded` once per install right after that call. The SDK doesn't read the clipboard on its own, so you decide when it happens. If you need user consent first (e.g. under GDPR/ePrivacy in the EU), call it right after consent is given.
+
+```swift
+Envoy.initialize(apiKey: {your-api-key})
+Envoy.shared.checkDeferredLink { found in
+    // found == true when Envoy link parameters were stored. Optional, e.g. to route the user.
+}
+// Once per install. Held until the check above ends, so it carries the attribution.
+Envoy.shared.logPixelEvent(request: LogPixelEventRequest(event: .appDownloaded)) { _, _ in }
+```
+
+Don't log `.appDownloaded` in the completion: it is called on every call of `checkDeferredLink`, with `false` once the check has been used up, so the event would be sent on every launch.
+
+What it does:
+- Runs once per install. It works from the first launch; once more than a day has passed since install, the clipboard no longer relates to the install, so it isn't touched and the check completes with `false`. This also covers apps that add the call in a later version, or get consent much later.
+- On iOS 14+ it first checks, without reading the content, whether the clipboard contains a web URL. It reads the clipboard only if it does, so iOS shows its paste banner/prompt only in that case. If the user denies the paste prompt, the check is used up and they are not asked again.
+- It works with the clipboard only while the app is active, and waits for that if needed.
+- It keeps only the `envoy_share_link_hash` and `envoy_lead_uuid` query parameters (stored in the Keychain and sent with pixel events). The rest of the clipboard content is discarded.
+- Calls made while a check is in progress, through any `Envoy` instance, get the result of that check.
+- The completion is called on the main thread, never before `checkDeferredLink` returns, and at most 3 seconds later. The check itself can take longer.
+- If the check can't finish (iOS fails to tell whether the clipboard holds a URL twice in a row, or doesn't answer within 30 seconds), it is not used up and a later call, e.g. on the next launch, tries again.
+
+Pixel events:
+- Events logged while a check is in progress, or right after `checkDeferredLink` was called from another thread, are held until the check ends and then sent with the attribution it found, if any.
+- If the app goes to the background first, held events are sent right away, since the app may be terminated. Events logged in the background aren't held.
+- Events logged when no check is in progress are sent right away, with whatever attribution is already stored.
+- `Envoy.shared.checkDeferredLink` and `Envoy.shared.logPixelEvent` can be called from any thread (through the `EnvoyType` protocol they are main-actor isolated).
+
+Disclose this clipboard access and the attribution data in your privacy policy and App Privacy details. The SDK ships a `PrivacyInfo.xcprivacy` privacy manifest that declares the data it collects and its use of `UserDefaults`.
+
+## 2.2 Initialize EnvoySDK with delegate (optional)
 To get inform when user did took screenshot add delegate right after SDK initialization and add EnvoyProtocol AppDelegate extension. 
 
 ```swift
@@ -183,22 +220,18 @@ Envoy.shared.getUserRemainingQuota(userId: "1") { response, error in
 
 Log a pixel event
 
-Configure a LogPixelEventRequest
+Configure a LogPixelEventRequest with one of the events: `.appDownloaded`, `.accountCreated`, `.trialActivated`, `.paymentSuccess` or `.custom(eventName:)`
 
 ```swift
-public struct LogPixelEventRequest: Encodable {
-    public struct Extra: Encodable {
-        let title: String?
-        let type: String?
-    }
-    
-    let eventName: String
-    let userId: String?
-    let sharerUserId: String?
-    let shareLinkHash: String?
-    let extra: Extra?
-}
+let request = LogPixelEventRequest(event: .appDownloaded)
+
+// With the optional sharer and extra details
+let paymentRequest = LogPixelEventRequest(event: .paymentSuccess,
+                                          sharerUserId: "sharer-id",
+                                          extra: .init(title: "Premium", type: "subscription"))
 ```
+
+The SDK adds the install attribution (`share_link_hash`, `lead_uuid`) stored by `checkDeferredLink` (see 2.1) when the event is sent.
 
 And log the event using the request
 

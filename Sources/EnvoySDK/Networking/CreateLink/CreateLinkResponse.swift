@@ -1,9 +1,9 @@
 import Foundation
 
 public struct CreateLinkResponse: Codable {
-    let url: String
-    let userRemainingQuota: Int
-    let modaltitle: String?
-    let mandatoryEmail: Bool?
-    let buttonText: String?
+    public let url: String
+    public let userRemainingQuota: Int
+    public let modaltitle: String?
+    public let mandatoryEmail: Bool?
+    public let buttonText: String?
 }

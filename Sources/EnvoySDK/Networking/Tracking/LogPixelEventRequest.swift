@@ -37,15 +37,27 @@ public struct LogPixelEventRequest: Encodable {
     
     let eventName: String
     let sharerUserId: String?
-    let shareLinkHash: String?
-    let leadUuid: String?
+    private(set) var shareLinkHash: String?
+    private(set) var leadUuid: String?
     let extra: Extra?
-    
+
     public init(event: PixelEvent, sharerUserId: String? = nil, extra: Extra? = nil) {
         self.eventName = event.rawValue
         self.sharerUserId = sharerUserId
-        self.shareLinkHash = Keychain.standard.value(forKey: .envoyShareLinkHash)
-        self.leadUuid = Keychain.standard.value(forKey: .envoyLeadUuid)
         self.extra = extra
+    }
+
+    struct Attribution {
+        let shareLinkHash: String?
+        let leadUuid: String?
+    }
+
+    /// Attribution is added when the event is sent, not when the request is created,
+    /// so a request built before the deferred-link check finished still carries it.
+    func attributed(with attribution: Attribution) -> LogPixelEventRequest {
+        var request = self
+        request.shareLinkHash = attribution.shareLinkHash
+        request.leadUuid = attribution.leadUuid
+        return request
     }
 }
