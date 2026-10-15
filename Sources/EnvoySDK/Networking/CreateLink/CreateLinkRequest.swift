@@ -5,7 +5,7 @@ public struct CreateLinkRequest: Codable {
     let contentSetting: ContentSetting
     let lifespanAfterClick: LifespanAfterClick?
     let openQuota: Int?
-    let extra: String?
+    let extra: [String: String]?
     let sharerId: String
     let isSandbox: Bool?
     let labels: [Label]?
@@ -14,7 +14,7 @@ public struct CreateLinkRequest: Codable {
 
     public init(autoplay: Bool?, contentSetting: ContentSetting,
                 lifespanAfterClick: LifespanAfterClick? = nil,
-                openQuota: Int? = nil, extra: String? = nil,
+                openQuota: Int? = nil, extra: [String: String]? = nil,
                 sharerId: String, isSandbox: Bool? = nil, labels: [Label]? = nil, isCarousel: Bool? = false, isCarouselLink: Bool? = false) {
         self.autoplay = autoplay
         self.contentSetting = contentSetting

@@ -98,7 +98,7 @@ You need to configure `CreateLinkRequest` with content, which you wanted to be s
     let contentSetting: ContentSetting
     let lifespanAfterClick: LifespanAfterClick?
     let openQuota: Int?
-    let extra: String?
+    let extra: [String: String]?
     let sharerId: String
     let isSandbox: Bool?
     let labels: [Label]?
@@ -171,6 +171,7 @@ Example of how to create request with image for CreateLink function.
 
         return CreateLinkRequest(autoplay: nil,
                                  contentSetting: contentSetting,
+                                 extra: ["articleId": "16208949"],
                                  sharerId: "ID",
                                  isSandbox: true)
     }
