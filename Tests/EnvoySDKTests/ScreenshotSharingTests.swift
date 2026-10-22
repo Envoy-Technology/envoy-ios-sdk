@@ -45,9 +45,34 @@ final class FakeShareSheet {
     }
 }
 
+final class FakeImageLoader {
+    private(set) var urls: [URL] = []
+    private(set) var cancelled = 0
+    private var pending: [(id: Int, completion: (UIImage?) -> Void)] = []
+
+    func load(url: URL, completion: @escaping (UIImage?) -> Void) -> () -> Void {
+        urls.append(url)
+        let id = urls.count
+        pending.append((id, completion))
+        return { [weak self] in
+            self?.cancelled += 1
+            self?.pending.removeAll { $0.id == id }
+        }
+    }
+
+    /// Answers the oldest load that wasn't cancelled.
+    func finish(_ image: UIImage?) {
+        pending.removeFirst().completion(image)
+    }
+}
+
 final class ScreenshotSharingTests: XCTestCase {
+    private static let imageURL = "https://news.example/image.jpg"
+    private let image = UIImage()
+
     private let service = FakeCreateLinkService()
     private let shareSheet = FakeShareSheet()
+    private let imageLoader = FakeImageLoader()
     private let notificationCenter = NotificationCenter()
     private let viewController = UIViewController()
     private var isApplicationActive = true
@@ -59,16 +84,18 @@ final class ScreenshotSharingTests: XCTestCase {
             createLinkService: service,
             notificationCenter: notificationCenter,
             isApplicationActive: { [unowned self] in self.isApplicationActive },
-            presentShareSheet: { [shareSheet] in shareSheet.present(items: $0, over: $1, completion: $2) })
+            presentShareSheet: { [shareSheet] in shareSheet.present(items: $0, over: $1, completion: $2) },
+            loadImage: { [imageLoader] url, completion in imageLoader.load(url: url) { completion($0) } })
     }
 
-    private func makeShare(id: String = "article-1") -> ScreenshotShare {
+    private func makeShare(id: String = "article-1", imageURL: String? = nil) -> ScreenshotShare {
         ScreenshotShare(request: .forArticle(url: "https://news.example/\(id)",
                                              id: id,
                                              title: "Title",
                                              description: "Description",
                                              sharerId: "sharer-1",
-                                             contentType: .screenshot),
+                                             contentType: .screenshot,
+                                             imageURL: imageURL),
                         message: "Read it free")
     }
 
@@ -115,7 +142,10 @@ final class ScreenshotSharingTests: XCTestCase {
         XCTAssertEqual(events, ["creatingLink", "linkCreated https://envoy.is/l/abc"])
         XCTAssertEqual(shareSheet.presentedItems.count, 1)
         XCTAssertEqual(shareSheet.presentedItems.first?.first as? String, "Read it free")
-        XCTAssertEqual(shareSheet.presentedItems.first?.last as? URL, URL(string: "https://envoy.is/l/abc"))
+        let link = shareSheet.presentedItems.first?.last as? ShareLinkItemSource
+        XCTAssertEqual(link?.url, URL(string: "https://envoy.is/l/abc"))
+        XCTAssertEqual(link?.title, "Title")
+        XCTAssertNil(link?.image)
     }
 
     @MainActor
@@ -180,6 +210,106 @@ final class ScreenshotSharingTests: XCTestCase {
         takeScreenshot()
 
         XCTAssertEqual(service.requests.count, 2)
+    }
+
+    // MARK: Preview image
+
+    private var presentedImage: UIImage? {
+        (shareSheet.presentedItems.last?.last as? ShareLinkItemSource)?.image
+    }
+
+    @MainActor
+    func testWithoutImageURL_noImageIsLoaded() {
+        let controller = makeController()
+        start(controller)
+
+        takeScreenshot()
+        finishLink()
+
+        XCTAssertTrue(imageLoader.urls.isEmpty)
+        XCTAssertEqual(shareSheet.presentedItems.count, 1)
+    }
+
+    @MainActor
+    func testArticleImage_isLoadedTogetherWithTheLinkAndPreviewed() {
+        let controller = makeController()
+        start(controller, share: makeShare(imageURL: Self.imageURL))
+
+        takeScreenshot()
+        XCTAssertEqual(imageLoader.urls, [URL(string: Self.imageURL)!])
+
+        finishLink()
+        XCTAssertTrue(shareSheet.presentedItems.isEmpty)
+
+        imageLoader.finish(image)
+        XCTAssertTrue(presentedImage === image)
+    }
+
+    @MainActor
+    func testImageReadyBeforeTheLink_waitsForIt() {
+        let controller = makeController()
+        start(controller, share: makeShare(imageURL: Self.imageURL))
+
+        takeScreenshot()
+        imageLoader.finish(image)
+        XCTAssertTrue(shareSheet.presentedItems.isEmpty)
+
+        finishLink()
+        XCTAssertTrue(presentedImage === image)
+    }
+
+    @MainActor
+    func testImageNotLoaded_opensShareSheetWithoutIt() {
+        let controller = makeController()
+        start(controller, share: makeShare(imageURL: Self.imageURL))
+
+        takeScreenshot()
+        finishLink()
+        imageLoader.finish(nil)
+
+        XCTAssertEqual(shareSheet.presentedItems.count, 1)
+        XCTAssertNil(presentedImage)
+    }
+
+    @MainActor
+    func testFailedLink_dropsTheImage() {
+        let controller = makeController()
+        start(controller, share: makeShare(imageURL: Self.imageURL))
+        takeScreenshot()
+
+        finishLink(error: .other)
+
+        XCTAssertEqual(imageLoader.cancelled, 1)
+        XCTAssertTrue(shareSheet.presentedItems.isEmpty)
+    }
+
+    @MainActor
+    func testStopWhileLoadingTheImage_dropsIt() {
+        let controller = makeController()
+        start(controller, share: makeShare(imageURL: Self.imageURL))
+        takeScreenshot()
+        finishLink()
+
+        controller.stop()
+
+        XCTAssertEqual(imageLoader.cancelled, 1)
+        XCTAssertTrue(shareSheet.presentedItems.isEmpty)
+    }
+
+    @MainActor
+    func testScreenshotOfSameContentAgain_reusesTheImage() {
+        let controller = makeController()
+        start(controller, share: makeShare(imageURL: Self.imageURL))
+        takeScreenshot()
+        finishLink()
+        imageLoader.finish(image)
+        shareSheet.close(completed: false)
+
+        takeScreenshot()
+
+        XCTAssertEqual(imageLoader.urls.count, 1)
+        XCTAssertEqual(shareSheet.presentedItems.count, 2)
+        XCTAssertTrue(presentedImage === image)
     }
 
     // MARK: Turning it on and off

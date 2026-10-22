@@ -163,6 +163,7 @@ override func viewWillDisappear(_ animated: Bool) {
 ```
 
 - The closure is called on each screenshot and can return any `CreateLinkRequest`. `forArticle` sends the article URL as the content source and its id in `extra` as `articleId`. With `.screenshot` the gift landing shows a screenshot of the page, rendered by Envoy from the URL; with `.htmlSource` it shows the page itself.
+- The share sheet previews the link with the request's title and its `previewImage` (the `imageURL` of `forArticle`), loaded together with the link. If the image isn't loaded within 2 seconds, the share sheet opens without it. Only the message and the link are shared; Mail uses the title as the subject.
 - Screenshots taken while the link is being created or the share sheet is open are ignored. A later screenshot of the same request reuses the link created earlier in the app session.
 - If the link can't be created, no share sheet is shown.
 - `stopScreenshotSharing` drops a link still being created, so no share sheet opens on another screen.
