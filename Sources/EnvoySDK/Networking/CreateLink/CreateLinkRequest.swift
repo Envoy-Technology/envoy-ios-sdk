@@ -125,3 +125,41 @@ public struct CreateLinkRequest: Codable {
     }
 
 }
+
+public extension CreateLinkRequest {
+    enum ContentType: String {
+        case video = "VIDEO"
+        case audio = "AUDIO"
+        case htmlPlain = "HTML_PLAIN"
+        case htmlSource = "HTML_SOURCE"
+        case screenshot = "SCREENSHOT"
+    }
+
+    /// A link to the article at `url`. With `.screenshot` the gift landing shows a screenshot of the page,
+    /// which Envoy renders from `url`; with `.htmlSource` it shows the page itself.
+    /// `id` is sent in `extra` as "articleId", next to `extra`; `title`, `description` and `imageURL`
+    /// also make the link preview in messaging apps.
+    static func forArticle(url: String,
+                           id: String,
+                           title: String,
+                           description: String,
+                           sharerId: String,
+                           contentType: ContentType,
+                           imageURL: String? = nil,
+                           extra: [String: String] = [:],
+                           isSandbox: Bool? = nil) -> CreateLinkRequest {
+        let contentSetting = ContentSetting(
+            contentType: contentType.rawValue,
+            contentName: title,
+            contentDescription: description,
+            common: Common(source: url, sourceIsRedirect: false, poster: imageURL),
+            previewTitle: title,
+            previewDescription: description,
+            previewImage: imageURL)
+        return CreateLinkRequest(autoplay: nil,
+                                 contentSetting: contentSetting,
+                                 extra: extra.merging(["articleId": id]) { _, articleId in articleId },
+                                 sharerId: sharerId,
+                                 isSandbox: isSandbox)
+    }
+}
