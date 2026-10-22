@@ -13,7 +13,6 @@ extension UserDefaults {
         static let isDeferredLinkCheckDone = "envoy.isDeferredLinkCheckDone"
         /// Written by SDKs before 0.0.16; generic, so the host app may use it too.
         static let legacyIsFreshInstall = "isFreshInstall"
-        static let notifyScreenShot = "notifyScreenShot"
     }
     
     // MARK: Deferred link

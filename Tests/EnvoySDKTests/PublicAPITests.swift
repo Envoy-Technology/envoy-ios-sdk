@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 // Not @testable: this file sees only the public API, as a host app does.
 import EnvoySDK
 
@@ -35,5 +36,25 @@ final class PublicAPITests: XCTestCase {
 
     func testClaimUserRewardRequest_exposesUserId() {
         XCTAssertEqual(ClaimUserRewardRequest(userId: "user-1").userId, "user-1")
+    }
+
+    func testScreenshotShare_isBuiltFromArticle() {
+        let share = ScreenshotShare(request: .forArticle(url: "https://news.example/1",
+                                                         id: "1",
+                                                         title: "Title",
+                                                         description: "Description",
+                                                         sharerId: "sharer-1",
+                                                         contentType: .htmlSource),
+                                    message: "Read it free")
+
+        XCTAssertEqual(share.message, "Read it free")
+    }
+
+    /// Not run; it only has to compile, as in a host app.
+    @MainActor
+    private func useScreenshotSharing(_ envoy: EnvoyType, from viewController: UIViewController) {
+        envoy.startScreenshotSharing(from: viewController) { nil }
+        envoy.startScreenshotSharing(from: viewController, onEvent: { _ in }) { nil }
+        envoy.stopScreenshotSharing()
     }
 }

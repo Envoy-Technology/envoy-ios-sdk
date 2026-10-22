@@ -65,28 +65,6 @@ Pixel events:
 
 Disclose this clipboard access and the attribution data in your privacy policy and App Privacy details. The SDK ships a `PrivacyInfo.xcprivacy` privacy manifest that declares the data it collects and its use of `UserDefaults`.
 
-## 2.2 Initialize EnvoySDK with delegate (optional)
-To get inform when user did took screenshot add delegate right after SDK initialization and add EnvoyProtocol AppDelegate extension. 
-
-```swift
-import EnvoySDK
-
-func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-...
-  Envoy.initialize(apiKey: {your-api-key})
-  Envoy.shared.delegate = self
-...
-}
-
-extension AppDelegate: EnvoyProtocol {
-    func userDidTookScreenshot(_ image: UIImage?) { }
-}
-
-```    
-To also capture user screenshots, add information about intentions and purpose of this action to info.plis application for key
-```NSPhotoLibraryUsageDescription``` 
-
-
 ## 3. Configure `CreateLinkRequest`
 
 You need to configure `CreateLinkRequest` with content, which you wanted to be shared. Request is pretty flexible and have both required and optional values.
@@ -156,26 +134,56 @@ Envoy.shared.createLink(request: request) { response, error in
 }
 ```
 
-## 4.1 Create link based on screenshot
-CreateLink function also supports base64 images generated from screenshots taken by the user. 
+## 4.1 Share a link when the user takes a screenshot
+When the user takes a screenshot of a screen with screenshot sharing turned on, the SDK creates that screen's link and opens the system share sheet with it, so the user shares a gift link instead of the image. It needs no permission: the screenshot itself isn't read.
 
-Example of how to create request with image for CreateLink function.
+Turn it on when the screen appears and off when it disappears, only on screens that show shareable content, such as an article:
+
 ```swift
-    private func mockedScreenshotLinkRequest(image: UIImage) -> CreateLinkRequest {
-        let imageBase64 = image.base64
-        let contentSetting = CreateLinkRequest.ContentSetting(
-            contentType: "SCREENSHOT",
-            contentName: "Test screenshot Base64",
-            contentDescription: "Content description Base64",
-            base64_file: imageBase64)
-
-        return CreateLinkRequest(autoplay: nil,
-                                 contentSetting: contentSetting,
-                                 extra: ["articleId": "16208949"],
-                                 sharerId: "ID",
-                                 isSandbox: true)
+override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    Envoy.shared.startScreenshotSharing(from: self) { [weak self] in
+        guard let self else { return nil }  // nil ignores the screenshot
+        return ScreenshotShare(
+            request: .forArticle(url: article.url,
+                                 id: article.id,
+                                 title: article.title,
+                                 description: article.lead,
+                                 sharerId: user.id,
+                                 contentType: .screenshot,  // or .htmlSource
+                                 imageURL: article.imageURL),
+            message: "Your friend wants to gift you this article")
     }
+}
+
+override func viewWillDisappear(_ animated: Bool) {
+    super.viewWillDisappear(animated)
+    Envoy.shared.stopScreenshotSharing()
+}
 ```
+
+- The closure is called on each screenshot and can return any `CreateLinkRequest`. `forArticle` sends the article URL as the content source and its id in `extra` as `articleId`. With `.screenshot` the gift landing shows a screenshot of the page, rendered by Envoy from the URL; with `.htmlSource` it shows the page itself.
+- The share sheet previews the link with the request's title and its `previewImage` (the `imageURL` of `forArticle`), loaded together with the link. If the image isn't loaded within 2 seconds, the share sheet opens without it. Only the message and the link are shared; Mail uses the title as the subject.
+- Screenshots taken while the link is being created or the share sheet is open are ignored. A later screenshot of the same request reuses the link created earlier in the app session.
+- If the link can't be created, no share sheet is shown.
+- `stopScreenshotSharing` drops a link still being created, so no share sheet opens on another screen.
+- Pass `onEvent` to follow the progress, e.g. to show a loader while the link is created:
+
+```swift
+Envoy.shared.startScreenshotSharing(from: self, onEvent: { event in
+    switch event {
+    case .creatingLink: break                    // link requested
+    case .linkCreated(let response): break       // share sheet opens next
+    case .shared(let activityType): break        // user shared, e.g. to .message
+    case .cancelled: break                       // share sheet closed without sharing
+    case .failed(let error): print(error.message)
+    }
+}) { [weak self] in
+    self?.screenshotShare()
+}
+```
+
+> **Upgrading from 0.0.17 or earlier:** `EnvoyProtocol`, `Envoy.shared.delegate` and `userDidTookScreenshot(_:)` are removed; the SDK no longer captures the screen. Use `startScreenshotSharing` on the screens where it applies. `NSPhotoLibraryUsageDescription` isn't needed for it.
 
 ## 5. Add Gift Button (Optional)
 

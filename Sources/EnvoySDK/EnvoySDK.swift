@@ -5,10 +5,6 @@ import Foundation
 import Combine
 import UIKit
 
-public protocol EnvoyProtocol {
-    func userDidTookScreenshot(_ image: UIImage?)
-}
-
 public protocol EnvoyType {
     @MainActor
     func checkDeferredLink(completion: ((Bool) -> Void)?)
@@ -51,12 +47,24 @@ public protocol EnvoyType {
     func getUserCurrentRewards(
         userId: String,
         completion: @escaping (UserCurrentRewardsResponse?, WebError?) -> ())
+    @MainActor
+    func startScreenshotSharing(from viewController: UIViewController,
+                                onEvent: ((ScreenshotSharingEvent) -> Void)?,
+                                share: @escaping () -> ScreenshotShare?)
+    @MainActor
+    func stopScreenshotSharing()
 }
 
 public extension EnvoyType {
     @MainActor
     func checkDeferredLink() {
         checkDeferredLink(completion: nil)
+    }
+
+    @MainActor
+    func startScreenshotSharing(from viewController: UIViewController,
+                                share: @escaping () -> ScreenshotShare?) {
+        startScreenshotSharing(from: viewController, onEvent: nil, share: share)
     }
 }
 
@@ -71,13 +79,12 @@ public final class Envoy: ObservableObject {
     private let apiUrl: String
 
     fileprivate let webClient: WebClient
-    fileprivate var notificationObserver: NSObjectProtocol?
+    fileprivate var screenshotSharingController: ScreenshotSharingController?
 
     private let pixelEventService: LogPixelEventServiceType
     private let deferredLinks: DeferredLinkCoordinator
 
     nonisolated(unsafe) public static var shared: Envoy!
-    public var delegate: EnvoyProtocol?
 
     public static func initialize(apiKey: String) {
         Envoy.shared = Envoy(apiKey: apiKey)
@@ -93,7 +100,6 @@ public final class Envoy: ObservableObject {
         self.pixelEventService = pixelEventService
             ?? LogPixelEventService(client: webClient, apiKey: apiKey)
         self.deferredLinks = deferredLinks
-        self.setupScreenshotNotification()
     }
 
     // MARK: Deferred link
@@ -109,38 +115,6 @@ public final class Envoy: ObservableObject {
     /// and at most 3 seconds later.
     nonisolated public func checkDeferredLink(completion: ((Bool) -> Void)? = nil) {
         deferredLinks.checkDeferredLink(completion: completion)
-    }
-
-    // MARK: Screenshot capture
-    //
-    // We snapshot the foreground key window the moment iOS posts
-    // `userDidTakeScreenshotNotification`. This needs no Photos-library
-    // permission, runs synchronously, and delivers exactly what the user
-    // saw — sidestepping the iOS 26 / iPhone 17 Pro "Full-Screen Preview"
-    // flow that delays or prevents the screenshot from reaching Photos.
-    func setupScreenshotNotification() {
-        notificationObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.userDidTakeScreenshotNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            let image = Self.captureKeyWindowImage()
-            self.delegate?.userDidTookScreenshot(image)
-        }
-    }
-
-    private static func captureKeyWindowImage() -> UIImage? {
-        guard let window = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive })?
-            .windows
-            .first(where: { $0.isKeyWindow }) else { return nil }
-
-        let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
-        return renderer.image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
-        }
     }
 }
 
@@ -223,6 +197,28 @@ extension Envoy: EnvoyType {
             GetUserCurrentRewardsService(client: self.webClient, apiKey: self.apiKey)
                 .getUserCurrentRewards(userId: userId, completion: completion)
     }
+
+    // MARK: Screenshot sharing
+    /// Turns screenshot sharing on for the screen of `viewController`; call it when the screen appears.
+    /// On each screenshot `share` is asked what to share; return nil to ignore that screenshot.
+    /// The SDK then creates the link (or reuses the one created for the same request earlier in the app session)
+    /// and opens the system share sheet with it over `viewController`.
+    /// Screenshots taken while a link is being created or the share sheet is open are ignored.
+    /// Calling it again, from any screen, replaces the earlier screen.
+    /// `share` and `onEvent` are called on the main thread.
+    @MainActor
+    public func startScreenshotSharing(from viewController: UIViewController,
+                                       onEvent: ((ScreenshotSharingEvent) -> Void)?,
+                                       share: @escaping () -> ScreenshotShare?) {
+        screenshotSharing.start(from: viewController, onEvent: onEvent, share: share)
+    }
+
+    /// Turns screenshot sharing off; call it when the screen disappears.
+    /// A link still being created is dropped, so no share sheet opens on another screen.
+    @MainActor
+    public func stopScreenshotSharing() {
+        screenshotSharingController?.stop()
+    }
 }
 
 @available(iOS 13.0, *)
@@ -235,6 +231,17 @@ private extension Envoy {
             baseURL: self.apiUrl)
         viewController.modalPresentationStyle = .fullScreen
         return viewController
+    }
+
+    @MainActor
+    var screenshotSharing: ScreenshotSharingController {
+        if let controller = screenshotSharingController {
+            return controller
+        }
+        let controller = ScreenshotSharingController(
+            createLinkService: CreateLinkService(client: webClient, apiKey: apiKey))
+        screenshotSharingController = controller
+        return controller
     }
 }
 #endif
