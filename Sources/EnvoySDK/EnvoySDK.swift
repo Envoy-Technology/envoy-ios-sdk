@@ -71,7 +71,6 @@ public extension EnvoyType {
 @available(iOS 13.0, *)
 public final class Envoy: ObservableObject {
     private enum Constants {
-        static let devEnvironment = "https://dev-api.envoy.is/partner/"
         static let prodEnvironment = "https://api.envoy.is/partner/"
     }
     
