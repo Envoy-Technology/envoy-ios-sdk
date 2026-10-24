@@ -8,13 +8,28 @@ Envoy iOS SDK aimed to deliver a fast solution to share content out of the iOS A
 # Quick Start Guide
 
 ## 1. Install Envoy SDK
-You can install the Envoy iOS SDK - Swift library by using CocoaPods. You will need your project token for initializing your library. You can get your project token from [account settings](https://dev-platform.envoy.is/dashboard/account/).
+You can install the Envoy iOS SDK - Swift library by using Swift Package Manager. It supports iOS 13 and later. You will need your project token for initializing your library. You can get your project token from [account settings](https://dev-platform.envoy.is/dashboard/account/).
 
-### Installation CocoaPods
-1. If this is your first time using CocoaPods, Install CocoaPods using `gem install cocoapods`. Otherwise, continue to Step 3.
-2. Run `pod setup` to create a local CocoaPods spec mirror.
-3. Create a Podfile in your Xcode project directory by running `pod init` in your terminal, edit the Podfile generated, and add the following line: `pod 'EnvoySDK'`.
-4. Run `pod install` in your Xcode project directory. CocoaPods should download and install the EnvoySDK library, and create a new Xcode workspace. Open up this workspace in Xcode or typing `open *.xcworkspace` in your terminal.
+### Installation with Swift Package Manager
+In Xcode:
+1. Open **File > Add Package Dependencies…**
+2. Enter `https://github.com/Envoy-Technology/envoy-ios-sdk.git`, choose **Up to Next Major Version** and **Add Package**.
+3. Add the `EnvoySDK` library to your app target.
+
+Or, in a `Package.swift`:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/Envoy-Technology/envoy-ios-sdk.git", from: "0.0.18")
+],
+targets: [
+    .target(name: "YourApp", dependencies: [
+        .product(name: "EnvoySDK", package: "envoy-ios-sdk")
+    ])
+]
+```
+
+> **Migrating from CocoaPods:** the `EnvoySDK` pod is deprecated and stays at 0.0.16, since CocoaPods trunk becomes read-only on December 2, 2026. Remove `pod 'EnvoySDK'` from your Podfile, run `pod install`, and add the package as above. The module name is the same, so `import EnvoySDK` doesn't change. Then follow the upgrade notes in 2.1 and 4.1.
 
 ## 2. Initialize EnvoySDK
 To initialize the library, add `import EnvoySDK` into `AppDelegate` and call `initialize(apiKey:)` in [application:didFinishLaunchingWithOptions:](https://developer.apple.com/documentation/uikit/uiapplicationdelegate#//apple_ref/occ/intfm/UIApplicationDelegate/application:willFinishLaunchingWithOptions:)
