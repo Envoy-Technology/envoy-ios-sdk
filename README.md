@@ -1,14 +1,12 @@
 <a name="introduction"></a>
 # Overview
 
-Envoy iOS SDK aimed to deliver a fast solution to share content out of the iOS Application.
-
-> **Authorization and Mixpanel usage**: For now ios-sdk has outdated in mentioned parts
+Envoy iOS SDK lets users of your iOS app share your content as gift links.
 
 # Quick Start Guide
 
 ## 1. Install Envoy SDK
-You can install the Envoy iOS SDK - Swift library by using Swift Package Manager. It supports iOS 13 and later. You will need your project token for initializing your library. You can get your project token from [account settings](https://dev-platform.envoy.is/dashboard/account/).
+You can install the Envoy iOS SDK - Swift library by using Swift Package Manager. It supports iOS 13 and later. You will need your API key to initialize the library. You can find it in the Security tab of [account settings](https://dashboard.envoy.is/dashboard/account/).
 
 ### Installation with Swift Package Manager
 In Xcode:
@@ -32,7 +30,7 @@ targets: [
 > **Migrating from CocoaPods:** the `EnvoySDK` pod is deprecated and stays at 0.0.16, since CocoaPods trunk becomes read-only on December 2, 2026. Remove `pod 'EnvoySDK'` from your Podfile, run `pod install`, and add the package as above. The module name is the same, so `import EnvoySDK` doesn't change. Then follow the upgrade notes in 2.1 and 4.1.
 
 ## 2. Initialize EnvoySDK
-To initialize the library, add `import EnvoySDK` into `AppDelegate` and call `initialize(apiKey:)` in [application:didFinishLaunchingWithOptions:](https://developer.apple.com/documentation/uikit/uiapplicationdelegate#//apple_ref/occ/intfm/UIApplicationDelegate/application:willFinishLaunchingWithOptions:)
+To initialize the library, add `import EnvoySDK` into `AppDelegate` and call `initialize(apiKey:)` in [application(_:didFinishLaunchingWithOptions:)](https://developer.apple.com/documentation/uikit/uiapplicationdelegate/application(_:didfinishlaunchingwithoptions:))
 ```swift
 import EnvoySDK
 
@@ -82,61 +80,67 @@ Disclose this clipboard access and the attribution data in your privacy policy a
 
 ## 3. Configure `CreateLinkRequest`
 
-You need to configure `CreateLinkRequest` with content, which you wanted to be shared. Request is pretty flexible and have both required and optional values.
+`CreateLinkRequest` describes the content to share. For an article, use `forArticle`:
 
 ```swift
-
- public struct CreateLinkRequest: Codable {
-    let autoplay: Bool?
-    let contentSetting: ContentSetting
-    let lifespanAfterClick: LifespanAfterClick?
-    let openQuota: Int?
-    let extra: [String: String]?
-    let sharerId: String
-    let isSandbox: Bool?
-    let labels: [Label]?
-    
-    public struct Common: Codable {
-        let source: String
-        let sourceIsRedirect: Bool?
-        let poster: String?
-    }
-
-    public struct ContentProtection: Codable {
-        let media: Common
-    }
-
-    public struct ContentSetting: Codable {
-        let contentType: String
-        let contentName: String
-        let contentDescription: String
-        let common: Common?
-        let base64_file: String?
-        let timeLimit: Int?
-        let timeStart: Int?
-        let availableFrom: String?
-        let availableTo: String?
-        let videoOrientation: Int?
-        let previewTitle: String?
-        let previewDescription: String?
-        let previewImage: String?
-        let mandatoryEmail: Bool?
-        let modalTitle: String?
-        let buttonText: String?
-        let contentProtection: ContentProtection?
-    }
-
-    public struct LifespanAfterClick: Codable {
-        let value: Int?
-        let unit: String
-    }
-
-    public struct Label: Codable {
-        let id: Int?
-        let text: String
-        let color: String
-    }
+let request = CreateLinkRequest.forArticle(url: article.url,
+                                           id: article.id,
+                                           title: article.title,
+                                           description: article.lead,
+                                           sharerId: user.id,
+                                           contentType: .htmlSource,  // or .screenshot
+                                           imageURL: article.imageURL)
 ```
+
+For other content, build it with the initializers. Only the parameters without default values are required:
+
+```swift
+let request = CreateLinkRequest(
+    autoplay: true,
+    contentSetting: .init(contentType: CreateLinkRequest.ContentType.video.rawValue,
+                          contentName: "Episode 1",
+                          contentDescription: "The first episode",
+                          common: .init(source: "https://example.com/episode-1.mp4",
+                                        sourceIsRedirect: false,
+                                        poster: "https://example.com/episode-1.jpg"),
+                          videoOrientation: .horizontal),
+    sharerId: user.id)
+```
+
+The full initializers:
+
+```swift
+CreateLinkRequest(autoplay: Bool?,
+                  contentSetting: ContentSetting,
+                  lifespanAfterClick: LifespanAfterClick? = nil,  // LifespanAfterClick(value: Int?, unit: String)
+                  openQuota: Int? = nil,
+                  extra: [String: String]? = nil,
+                  sharerId: String,
+                  isSandbox: Bool? = nil,
+                  labels: [Label]? = nil,                         // Label(id: Int?, text: String, color: String)
+                  isCarousel: Bool? = false,
+                  isCarouselLink: Bool? = false)
+
+CreateLinkRequest.ContentSetting(contentType: String,             // a CreateLinkRequest.ContentType rawValue
+                                 contentName: String,
+                                 contentDescription: String,
+                                 common: Common? = nil,           // Common(source: String, sourceIsRedirect: Bool?, poster: String?)
+                                 base64_file: String? = nil,
+                                 timeLimit: Int? = nil,
+                                 timeStart: Int? = nil,
+                                 availableFrom: String? = nil,
+                                 availableTo: String? = nil,
+                                 videoOrientation: VideoOrientation? = nil,  // .horizontal or .vertical
+                                 previewTitle: String? = nil,
+                                 previewDescription: String? = nil,
+                                 previewImage: String? = nil,
+                                 mandatoryEmail: Bool? = nil,
+                                 modalTitle: String? = nil,
+                                 buttonText: String? = nil,
+                                 contentProtection: ContentProtection? = nil)  // ContentProtection(media: Common)
+```
+
+`CreateLinkRequest.ContentType` is one of `.video`, `.audio`, `.htmlPlain`, `.htmlSource` or `.screenshot`.
 
 ## 4. Create link
 
@@ -202,18 +206,17 @@ Envoy.shared.startScreenshotSharing(from: self, onEvent: { event in
 
 ## 5. Add Gift Button (Optional)
 
-SDK gives ability to add gift button with SDK design for quick implementation.
+The SDK provides a ready-made gift button. It does nothing on its own, so add an action, e.g. to present the share screen (see 6).
 
 ```swift
-let button = envoySDK.giftButton(request: request)
-buttin.addTarget(self, action: #selector(giftAction), for: .touchUpInside)
+let button = Envoy.shared.giftButton(request: request)
+button.addTarget(self, action: #selector(giftAction), for: .touchUpInside)
 containerView.addSubview(button)
 ```
 
 ## 6. Present Share Screen
 
-To present share screen you need to initialize instance of `Envoy` with `apiKey`. You can get your project token from [account settings](https://dev-platform.envoy.is/dashboard/account/).
-Upon tapping on share button you need to call any of these methods.
+The share screen creates the link and lets the user share it. When the user taps your share button, call one of these methods on `Envoy.shared` (after `Envoy.initialize(apiKey:)`, see 2):
 * `func presentShareGift(from viewController: UIViewController, request: CreateLinkRequest)`
 * `func pushShareGift(in navigationController: UINavigationController, request: CreateLinkRequest)`
 
@@ -222,8 +225,8 @@ import EnvoySDK
 
 class ViewController: UIViewController {
   ...
-  func giftAction() {
-      envoySDK.presentShareGift(from: self, request: request)
+  @objc func giftAction() {
+      Envoy.shared.presentShareGift(from: self, request: request)
   }
   ...
 }
@@ -290,7 +293,7 @@ public struct ClaimUserRewardRequest: Encodable {
 And claim a reward for a specific user
 
 ```swift
-Envoy.shared.claimUserReward(request: request) { response, error in
+Envoy.shared.claimUserReward(request: ClaimUserRewardRequest(userId: "1")) { response, error in
     print(response)
     print(error)
 }
@@ -308,20 +311,20 @@ Envoy.shared.getUserCurrentRewards(userId: "1") { response, error in
 ```
 ## 12. Prepare link
 
-Prepare link's content before it's gifted. Function specific for SCREENSHOT types of links.
+Prepare the content at a URL before it's gifted. Only for links with the `.screenshot` content type.
 
 ```swift
-Envoy.shared.prepLink(request: request) { response, error in
+Envoy.shared.prepLink(request: PrepLinkRequest(url: article.url)) { response, error in
     print(response)
     print(error)
 }
 ```
 ## 13. Manage Links
 
-Manage links adds additional links to create a carousel.
+Add links to a carousel.
 
 ```swift
-Envoy.shared.manageLinks(request: ManageLinksRequest) { response, error in
+Envoy.shared.manageLinks(request: ManageLinksRequest(links: ["https://example.com/a", "https://example.com/b"])) { response, error in
     print(response)
     print(error)
 }
