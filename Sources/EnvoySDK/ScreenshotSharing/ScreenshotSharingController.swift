@@ -7,6 +7,7 @@ import UIKit
 final class ScreenshotSharingController {
     typealias ShareProvider = () -> ScreenshotShare?
     typealias EventHandler = (ScreenshotSharingEvent) -> Void
+    typealias BeforeSharing = (ScreenshotSharePrompt) -> Void
     /// Presents the share sheet over `viewController`; returns false when it can't be shown.
     typealias PresentShareSheet = @MainActor (_ items: [Any],
                                               _ viewController: UIViewController,
@@ -19,6 +20,7 @@ final class ScreenshotSharingController {
         weak var viewController: UIViewController?
         let share: ShareProvider
         let onEvent: EventHandler?
+        let beforeSharing: BeforeSharing?
     }
 
     /// From the screenshot until both the link and the preview image are ready.
@@ -46,6 +48,8 @@ final class ScreenshotSharingController {
     private var sessionCount = 0
     private var screenshotObserver: NSObjectProtocol?
     private var activationObserver: NSObjectProtocol?
+    /// Your screen is shown; nothing is created until it's resolved.
+    private var prompt: ScreenshotSharePrompt?
     private var linkTask: URLSessionDataTask?
     private var preparation: Preparation?
     private var isPresenting = false
@@ -55,7 +59,7 @@ final class ScreenshotSharingController {
 
     /// From the screenshot until the share sheet closes; screenshots taken meanwhile are ignored.
     private var isBusy: Bool {
-        preparation != nil || activationObserver != nil || isPresenting
+        prompt != nil || preparation != nil || activationObserver != nil || isPresenting
     }
 
     init(createLinkService: CreateLinkServiceType,
@@ -71,10 +75,17 @@ final class ScreenshotSharingController {
     }
 
     /// Replaces the screen started earlier, if any.
-    func start(from viewController: UIViewController, onEvent: EventHandler?, share: @escaping ShareProvider) {
+    func start(from viewController: UIViewController,
+               onEvent: EventHandler?,
+               beforeSharing: BeforeSharing? = nil,
+               share: @escaping ShareProvider) {
         stop()
         sessionCount += 1
-        session = Session(id: sessionCount, viewController: viewController, share: share, onEvent: onEvent)
+        session = Session(id: sessionCount,
+                          viewController: viewController,
+                          share: share,
+                          onEvent: onEvent,
+                          beforeSharing: beforeSharing)
         screenshotObserver = notificationCenter.addObserver(forName: UIApplication.userDidTakeScreenshotNotification,
                                                             object: nil,
                                                             queue: .main) { [weak self] _ in
@@ -92,6 +103,7 @@ final class ScreenshotSharingController {
             notificationCenter.removeObserver(screenshotObserver)
         }
         screenshotObserver = nil
+        prompt = nil
         stopWaitingForActivation()
         linkTask?.cancel()
         linkTask = nil
@@ -101,6 +113,27 @@ final class ScreenshotSharingController {
 
     private func userDidTakeScreenshot() {
         guard let session = session, !isBusy, let share = session.share() else { return }
+        guard let beforeSharing = session.beforeSharing else {
+            prepare(share, in: session)
+            return
+        }
+        let prompt = ScreenshotSharePrompt(content: share) { [weak self] prompt, accepted in
+            self?.promptResolved(prompt, share: accepted)
+        }
+        self.prompt = prompt
+        beforeSharing(prompt)
+    }
+
+    /// A prompt of a stopped screen has already been dropped.
+    private func promptResolved(_ prompt: ScreenshotSharePrompt, share: Bool) {
+        guard self.prompt === prompt, let session = session else { return }
+        self.prompt = nil
+        if share {
+            prepare(prompt.content, in: session)
+        }
+    }
+
+    private func prepare(_ share: ScreenshotShare, in session: Session) {
         let preparation = Preparation(sessionID: session.id, share: share)
         self.preparation = preparation
         startLoadingImage(for: preparation)

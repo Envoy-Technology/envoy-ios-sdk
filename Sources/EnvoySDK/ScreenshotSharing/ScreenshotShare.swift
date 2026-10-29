@@ -13,6 +13,36 @@ public struct ScreenshotShare {
     }
 }
 
+/// A screenshot waiting for your own screen, e.g. a "Send a gift" sheet, before anything is shared.
+/// No link is created, so no quota is used, until `share()` is called.
+@MainActor
+public final class ScreenshotSharePrompt {
+    /// What `share()` shares, as returned for this screenshot.
+    public let content: ScreenshotShare
+    private var onResolved: ((ScreenshotSharePrompt, _ share: Bool) -> Void)?
+
+    init(content: ScreenshotShare, onResolved: @escaping (ScreenshotSharePrompt, _ share: Bool) -> Void) {
+        self.content = content
+        self.onResolved = onResolved
+    }
+
+    /// Creates the link and opens the system share sheet with it. Only the first `share()` or `cancel()` counts.
+    public func share() {
+        resolve(share: true)
+    }
+
+    /// Nothing is shared and no link is created. Call it when your screen is closed without sharing.
+    public func cancel() {
+        resolve(share: false)
+    }
+
+    private func resolve(share: Bool) {
+        guard let onResolved = onResolved else { return }
+        self.onResolved = nil
+        onResolved(self, share)
+    }
+}
+
 /// Progress of the sharing started by a screenshot.
 public enum ScreenshotSharingEvent {
     /// The link is being created; the share sheet opens when it's ready.

@@ -202,6 +202,27 @@ Envoy.shared.startScreenshotSharing(from: self, onEvent: { event in
 }
 ```
 
+### Show your own screen before sharing
+To show your own screen first, e.g. a "Send a gift" sheet, pass `beforeSharing`. After the closure returns a `ScreenshotShare`, `beforeSharing` is called with a `ScreenshotSharePrompt` instead of creating the link. Nothing is created until you call `prompt.share()`, so a screen closed without sharing uses none of the user's quota:
+
+```swift
+Envoy.shared.startScreenshotSharing(from: self, beforeSharing: { [weak self] prompt in
+    let gift = GiftViewController(message: prompt.content.message)
+    gift.onSend = { [weak gift] in gift?.dismiss(animated: true) { prompt.share() } }  // creates the link, then opens the share sheet
+    gift.onClose = { prompt.cancel() }  // nothing is shared or created
+    self?.present(gift, animated: true)
+}) { [weak self] in
+    self?.screenshotShare()
+}
+```
+
+- Screenshots are ignored until `share()` or `cancel()` is called, so always call one of them when your screen closes, including when the user swipes the sheet down. Only the first call counts.
+- Present it over the screen, e.g. as a sheet (the default style) or `.overFullScreen`, not pushed or `.fullScreen`: those make the screen disappear, and `stopScreenshotSharing` in `viewWillDisappear` drops the prompt.
+- The share sheet opens over the topmost presented screen. To open it from the screen itself, call `share()` once your screen is dismissed, as above.
+- Pass `onEvent` too to follow the progress: it reports nothing while your screen is shown, and after `share()` it follows the flow above, starting with `.creatingLink`.
+
+> **Upgrading from 0.0.19 or earlier:** `EnvoyType.startScreenshotSharing(from:onEvent:share:)` is now `startScreenshotSharing(from:onEvent:beforeSharing:share:)`. Calls don't change, but types that conform to `EnvoyType`, such as test doubles, must implement the new method.
+
 > **Upgrading from 0.0.17 or earlier:** `EnvoyProtocol`, `Envoy.shared.delegate` and `userDidTookScreenshot(_:)` are removed; the SDK no longer captures the screen. Use `startScreenshotSharing` on the screens where it applies. `NSPhotoLibraryUsageDescription` isn't needed for it.
 
 ## 5. Add Gift Button (Optional)
