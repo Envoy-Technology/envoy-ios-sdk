@@ -455,6 +455,7 @@ final class ScreenshotSharingTests: XCTestCase {
         takeScreenshot()
 
         prompts.first?.share()
+        drainMainQueue()
         XCTAssertEqual(events, ["creatingLink"])
 
         finishLink()
@@ -462,6 +463,76 @@ final class ScreenshotSharingTests: XCTestCase {
         XCTAssertEqual(events, ["creatingLink", "linkCreated https://envoy.is/l/abc"])
         XCTAssertEqual(shareSheet.presentedItems.count, 1)
         XCTAssertEqual(shareSheet.presentedItems.first?.first as? String, "Read it free")
+    }
+
+    @MainActor
+    func testPromptShareWithLinkCreatedEarlier_opensShareSheetAfterShareReturns() {
+        let controller = makeController()
+        startWithPrompt(controller)
+        takeScreenshot()
+        prompts[0].share()
+        drainMainQueue()
+        finishLink()
+        shareSheet.close(completed: false)
+        takeScreenshot()
+
+        prompts[1].share()
+        XCTAssertEqual(shareSheet.presentedItems.count, 1)
+
+        drainMainQueue()
+        XCTAssertEqual(shareSheet.presentedItems.count, 2)
+    }
+
+    @MainActor
+    func testScreenshotRightAfterShare_isIgnored() {
+        let controller = makeController()
+        startWithPrompt(controller)
+        takeScreenshot()
+
+        prompts.first?.share()
+        takeScreenshot()
+
+        XCTAssertEqual(prompts.count, 1)
+        XCTAssertEqual(service.requests.count, 1)
+    }
+
+    @MainActor
+    func testStopRightAfterShare_createsNoLink() {
+        let controller = makeController()
+        startWithPrompt(controller)
+        takeScreenshot()
+
+        prompts.first?.share()
+        controller.stop()
+        drainMainQueue()
+
+        XCTAssertTrue(service.requests.isEmpty)
+    }
+
+    @MainActor
+    func testPromptReleasedWithoutAnswer_nextScreenshotShowsAnotherPrompt() {
+        let controller = makeController()
+        startWithPrompt(controller)
+        takeScreenshot()
+
+        prompts.removeAll()
+        takeScreenshot()
+
+        XCTAssertEqual(prompts.count, 1)
+        XCTAssertTrue(service.requests.isEmpty)
+    }
+
+    @MainActor
+    func testPrompt_isActiveUntilAnswered() {
+        let controller = makeController()
+        startWithPrompt(controller)
+        takeScreenshot()
+        XCTAssertEqual(prompts.first?.isActive, true)
+
+        XCTAssertEqual(prompts.first?.cancel(), true)
+
+        XCTAssertEqual(prompts.first?.isActive, false)
+        XCTAssertEqual(prompts.first?.cancel(), false)
     }
 
     @MainActor
@@ -496,8 +567,9 @@ final class ScreenshotSharingTests: XCTestCase {
         startWithPrompt(controller)
         takeScreenshot()
 
-        prompts.first?.share()
-        prompts.first?.share()
+        XCTAssertEqual(prompts.first?.share(), true)
+        XCTAssertEqual(prompts.first?.share(), false)
+        drainMainQueue()
 
         XCTAssertEqual(service.requests.count, 1)
     }
@@ -509,8 +581,10 @@ final class ScreenshotSharingTests: XCTestCase {
         takeScreenshot()
 
         controller.stop()
-        prompts.first?.share()
 
+        XCTAssertEqual(prompts.first?.isActive, false)
+        XCTAssertEqual(prompts.first?.share(), false)
+        drainMainQueue()
         XCTAssertTrue(service.requests.isEmpty)
     }
 
@@ -521,8 +595,10 @@ final class ScreenshotSharingTests: XCTestCase {
         takeScreenshot()
 
         start(controller, share: makeShare(id: "article-2"))
-        prompts.first?.share()
 
+        XCTAssertEqual(prompts.first?.isActive, false)
+        XCTAssertEqual(prompts.first?.share(), false)
+        drainMainQueue()
         XCTAssertTrue(service.requests.isEmpty)
     }
 

@@ -57,6 +57,8 @@ final class PublicAPITests: XCTestCase {
         envoy.startScreenshotSharing(from: viewController, onEvent: { _ in }) { nil }
         envoy.startScreenshotSharing(from: viewController, beforeSharing: { prompt in
             _ = prompt.content.message
+            let _: Bool = prompt.isActive
+            let _: Bool = prompt.share()
             prompt.share()
             prompt.cancel()
         }) { nil }

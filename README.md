@@ -216,10 +216,12 @@ Envoy.shared.startScreenshotSharing(from: self, beforeSharing: { [weak self] pro
 }
 ```
 
-- Screenshots are ignored until `share()` or `cancel()` is called, so always call one of them when your screen closes, including when the user swipes the sheet down. Only the first call counts.
+- Screenshots are ignored while the prompt is waiting for `share()` or `cancel()`, so call `cancel()` when the user closes your screen, including when they swipe the sheet down. Only the first call counts.
+- A prompt your app no longer holds counts as cancelled, e.g. when your screen couldn't be presented or was closed without calling either. So keep the prompt in your screen, not in an object that outlives it.
 - Present it over the screen, e.g. as a sheet (the default style) or `.overFullScreen`, not pushed or `.fullScreen`: those make the screen disappear, and `stopScreenshotSharing` in `viewWillDisappear` drops the prompt.
-- The share sheet opens over the topmost presented screen. To open it from the screen itself, call `share()` once your screen is dismissed, as above.
-- Pass `onEvent` too to follow the progress: it reports nothing while your screen is shown, and after `share()` it follows the flow above, starting with `.creatingLink`.
+- A dropped prompt does nothing: `share()` and `cancel()` return `false`, and `prompt.isActive` is `false`. Check the result to tell the user that nothing was shared.
+- The share sheet opens once `share()` has returned, over the topmost presented screen. Dismiss your screen right before or after calling `share()`, or call it in the dismissal's completion as above; if your screen stays, the share sheet opens over it.
+- Pass `onEvent` too to follow the progress: it reports nothing while your screen is shown, and after `share()` it follows the flow above, starting with `.creatingLink`, or with `.linkCreated` when a link created earlier in the app session is reused.
 
 > **Upgrading from 0.0.19 or earlier:** `EnvoyType.startScreenshotSharing(from:onEvent:share:)` is now `startScreenshotSharing(from:onEvent:beforeSharing:share:)`. Calls don't change, but types that conform to `EnvoyType`, such as test doubles, must implement the new method.
 

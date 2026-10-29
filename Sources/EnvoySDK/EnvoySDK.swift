@@ -221,7 +221,7 @@ extension Envoy: EnvoyType {
     /// Calling it again, from any screen, replaces the earlier screen.
     /// To show your own screen first, pass `beforeSharing`: it's called after `share`, with a prompt, and nothing
     /// is created until you call `prompt.share()`, so a closed screen uses no quota. Call `prompt.cancel()` when
-    /// the user closes it; screenshots are ignored until either is called.
+    /// the user closes it; screenshots are ignored until either is called, or until you release the prompt.
     /// `share`, `beforeSharing` and `onEvent` are called on the main thread.
     @MainActor
     public func startScreenshotSharing(from viewController: UIViewController,
@@ -232,7 +232,8 @@ extension Envoy: EnvoyType {
     }
 
     /// Turns screenshot sharing off; call it when the screen disappears.
-    /// A link still being created, or a prompt still shown, is dropped, so no share sheet opens on another screen.
+    /// A link still being created, or a prompt still shown, is dropped, so no share sheet opens on another screen;
+    /// a dropped prompt's `share()` returns false.
     @MainActor
     public func stopScreenshotSharing() {
         screenshotSharingController?.stop()

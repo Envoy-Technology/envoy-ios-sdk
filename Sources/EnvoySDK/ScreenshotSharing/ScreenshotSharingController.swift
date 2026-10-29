@@ -49,7 +49,8 @@ final class ScreenshotSharingController {
     private var screenshotObserver: NSObjectProtocol?
     private var activationObserver: NSObjectProtocol?
     /// Your screen is shown; nothing is created until it's resolved.
-    private var prompt: ScreenshotSharePrompt?
+    /// Weak: a prompt the app no longer holds, e.g. as its screen was closed, counts as cancelled.
+    private weak var prompt: ScreenshotSharePrompt?
     private var linkTask: URLSessionDataTask?
     private var preparation: Preparation?
     private var isPresenting = false
@@ -103,6 +104,7 @@ final class ScreenshotSharingController {
             notificationCenter.removeObserver(screenshotObserver)
         }
         screenshotObserver = nil
+        prompt?.invalidate()
         prompt = nil
         stopWaitingForActivation()
         linkTask?.cancel()
@@ -126,10 +128,18 @@ final class ScreenshotSharingController {
 
     /// A prompt of a stopped screen has already been dropped.
     private func promptResolved(_ prompt: ScreenshotSharePrompt, share: Bool) {
-        guard self.prompt === prompt, let session = session else { return }
-        self.prompt = nil
-        if share {
-            prepare(prompt.content, in: session)
+        guard self.prompt === prompt, session != nil else { return }
+        guard share else {
+            self.prompt = nil
+            return
+        }
+        // Starts once the app's code has returned, e.g. after it began dismissing its screen, so the share sheet
+        // never opens from inside share(), even with a link created earlier. Screenshots are ignored meanwhile,
+        // and stop() drops it.
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.prompt === prompt, let session = self.session else { return }
+            self.prompt = nil
+            self.prepare(prompt.content, in: session)
         }
     }
 
