@@ -50,6 +50,7 @@ public protocol EnvoyType {
     @MainActor
     func startScreenshotSharing(from viewController: UIViewController,
                                 onEvent: ((ScreenshotSharingEvent) -> Void)?,
+                                beforeSharing: ((ScreenshotSharePrompt) -> Void)?,
                                 share: @escaping () -> ScreenshotShare?)
     @MainActor
     func stopScreenshotSharing()
@@ -64,7 +65,21 @@ public extension EnvoyType {
     @MainActor
     func startScreenshotSharing(from viewController: UIViewController,
                                 share: @escaping () -> ScreenshotShare?) {
-        startScreenshotSharing(from: viewController, onEvent: nil, share: share)
+        startScreenshotSharing(from: viewController, onEvent: nil, beforeSharing: nil, share: share)
+    }
+
+    @MainActor
+    func startScreenshotSharing(from viewController: UIViewController,
+                                onEvent: ((ScreenshotSharingEvent) -> Void)?,
+                                share: @escaping () -> ScreenshotShare?) {
+        startScreenshotSharing(from: viewController, onEvent: onEvent, beforeSharing: nil, share: share)
+    }
+
+    @MainActor
+    func startScreenshotSharing(from viewController: UIViewController,
+                                beforeSharing: @escaping (ScreenshotSharePrompt) -> Void,
+                                share: @escaping () -> ScreenshotShare?) {
+        startScreenshotSharing(from: viewController, onEvent: nil, beforeSharing: beforeSharing, share: share)
     }
 }
 
@@ -204,16 +219,21 @@ extension Envoy: EnvoyType {
     /// and opens the system share sheet with it over `viewController`.
     /// Screenshots taken while a link is being created or the share sheet is open are ignored.
     /// Calling it again, from any screen, replaces the earlier screen.
-    /// `share` and `onEvent` are called on the main thread.
+    /// To show your own screen first, pass `beforeSharing`: it's called after `share`, with a prompt, and nothing
+    /// is created until you call `prompt.share()`, so a closed screen uses no quota. Call `prompt.cancel()` when
+    /// the user closes it; screenshots are ignored until either is called, or until you release the prompt.
+    /// `share`, `beforeSharing` and `onEvent` are called on the main thread.
     @MainActor
     public func startScreenshotSharing(from viewController: UIViewController,
                                        onEvent: ((ScreenshotSharingEvent) -> Void)?,
+                                       beforeSharing: ((ScreenshotSharePrompt) -> Void)?,
                                        share: @escaping () -> ScreenshotShare?) {
-        screenshotSharing.start(from: viewController, onEvent: onEvent, share: share)
+        screenshotSharing.start(from: viewController, onEvent: onEvent, beforeSharing: beforeSharing, share: share)
     }
 
     /// Turns screenshot sharing off; call it when the screen disappears.
-    /// A link still being created is dropped, so no share sheet opens on another screen.
+    /// A link still being created, or a prompt still shown, is dropped, so no share sheet opens on another screen;
+    /// a dropped prompt's `share()` returns false.
     @MainActor
     public func stopScreenshotSharing() {
         screenshotSharingController?.stop()
