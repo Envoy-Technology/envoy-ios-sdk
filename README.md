@@ -18,7 +18,7 @@ Or, in a `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Envoy-Technology/envoy-ios-sdk.git", from: "0.0.18")
+    .package(url: "https://github.com/Envoy-Technology/envoy-ios-sdk.git", from: "1.1.0")
 ],
 targets: [
     .target(name: "YourApp", dependencies: [
@@ -26,6 +26,8 @@ targets: [
     ])
 ]
 ```
+
+> **Upgrading from 0.0.x:** 1.1.0 has the same API as 0.0.20; the version jump only matches the Android SDK. Swift Package Manager treats 1.x as a new major version, so a rule such as "Up to Next Major" from 0.0.x stays on 0.0.x. Change the rule to start from 1.1.0.
 
 > **Migrating from CocoaPods:** the `EnvoySDK` pod is deprecated and stays at 0.0.16, since CocoaPods trunk becomes read-only on December 2, 2026. Remove `pod 'EnvoySDK'` from your Podfile, run `pod install`, and add the package as above. The module name is the same, so `import EnvoySDK` doesn't change. Then follow the upgrade notes in 2.1 and 4.1.
 
