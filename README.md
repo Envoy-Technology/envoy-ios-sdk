@@ -139,10 +139,28 @@ CreateLinkRequest.ContentSetting(contentType: String,             // a CreateLin
                                  mandatoryEmail: Bool? = nil,
                                  modalTitle: String? = nil,
                                  buttonText: String? = nil,
-                                 contentProtection: ContentProtection? = nil)  // ContentProtection(media: Common)
+                                 contentProtection: ContentProtection? = nil)  // DRM, see below
 ```
 
 `CreateLinkRequest.ContentType` is one of `.video`, `.audio`, `.htmlPlain`, `.htmlSource` or `.screenshot`.
+
+### DRM-protected content
+
+For DRM-protected video or audio, pass a `ContentProtection`: the gift landing plays it with Shaka Player, and `drm` is Shaka Player's DRM configuration. See [DRM-protected content](https://docs.envoy.is/guides/drm/).
+
+```swift
+typealias Link = CreateLinkRequest
+
+let protection = Link.ContentProtection(
+    sources: [Link.KeySystem.fairPlay: "https://cdn.example.com/stream.m3u8"],  // others play common.source (DASH)
+    drm: Link.DRMConfig(
+        servers: [Link.KeySystem.widevine: "https://license.example.com/widevine",
+                  Link.KeySystem.fairPlay: "https://license.example.com/fairplay"],
+        advanced: [Link.KeySystem.fairPlay: Link.AdvancedDRMConfig(
+            serverCertificateUri: "https://license.example.com/fairplay.cer",
+            headers: ["x-drm-token": "token"])]),
+    fairPlayProvider: .ezdrm)
+```
 
 ## 4. Create link
 

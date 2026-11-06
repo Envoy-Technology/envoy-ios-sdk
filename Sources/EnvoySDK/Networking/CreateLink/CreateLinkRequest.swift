@@ -41,12 +41,105 @@ public struct CreateLinkRequest: Codable {
         }
     }
 
-    // Define the ContentProtection structure
+    /// DRM for the link's video or audio, played on the gift landing by Shaka Player
+    /// (see https://docs.envoy.is/guides/drm/). Needs `sources`, `drm` or both.
     public struct ContentProtection: Codable {
-        let media: Common
+        /// A manifest per key system (`KeySystem`), for browsers using that DRM system;
+        /// others play `common.source` (e.g. common = DASH, sources = HLS for FairPlay).
+        let sources: [String: String]?
+        /// Shaka Player's DRM configuration.
+        let drm: DRMConfig?
+        /// The FairPlay license request format of your DRM provider; without it the raw SPC is sent.
+        let fairPlayProvider: FairPlayProvider?
 
-        public init(media: Common) {
-            self.media = media
+        public init(sources: [String: String]? = nil, drm: DRMConfig? = nil, fairPlayProvider: FairPlayProvider? = nil) {
+            self.sources = sources
+            self.drm = drm
+            self.fairPlayProvider = fairPlayProvider
+        }
+    }
+
+    /// Key system IDs, the keys of `ContentProtection.sources`, `DRMConfig.servers` and `DRMConfig.advanced`.
+    public enum KeySystem {
+        public static let widevine = "com.widevine.alpha"
+        public static let playReady = "com.microsoft.playready"
+        public static let fairPlay = "com.apple.fps"
+        public static let clearKey = "org.w3.clearkey"
+    }
+
+    /// Shaka Player's FairPlay presets.
+    public enum FairPlayProvider: String, Codable {
+        case verimatrix, ezdrm, conax, expressplay, mux, gumlet
+    }
+
+    /// Shaka Player's `drm` configuration: license servers and per-key-system settings.
+    public struct DRMConfig: Codable {
+        /// The license server URL per key system.
+        let servers: [String: String]
+        let advanced: [String: AdvancedDRMConfig]?
+
+        public init(servers: [String: String], advanced: [String: AdvancedDRMConfig]? = nil) {
+            self.servers = servers
+            self.advanced = advanced
+        }
+    }
+
+    /// Shaka Player's per-key-system `drm.advanced` settings. Sent with Shaka's camelCase names
+    /// (`serverCertificate`, ...): it encodes as a dictionary, whose keys `.convertToSnakeCase` leaves alone.
+    public struct AdvancedDRMConfig: Codable {
+        /// The server certificate, base64-encoded (FairPlay needs one, or `serverCertificateUri`).
+        let serverCertificate: String?
+        /// A URL the player downloads the server certificate from.
+        let serverCertificateUri: String?
+        /// Headers added to this key system's license requests.
+        let headers: [String: String]?
+
+        public init(serverCertificate: String? = nil, serverCertificateUri: String? = nil, headers: [String: String]? = nil) {
+            self.serverCertificate = serverCertificate
+            self.serverCertificateUri = serverCertificateUri
+            self.headers = headers
+        }
+
+        private enum Value: Codable {
+            case string(String)
+            case headers([String: String])
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.singleValueContainer()
+                if let string = try? container.decode(String.self) {
+                    self = .string(string)
+                } else {
+                    self = .headers(try container.decode([String: String].self))
+                }
+            }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.singleValueContainer()
+                switch self {
+                case .string(let string): try container.encode(string)
+                case .headers(let headers): try container.encode(headers)
+                }
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            let values = try decoder.singleValueContainer().decode([String: Value].self)
+            func string(_ key: String) -> String? {
+                if case .string(let value)? = values[key] { return value }
+                return nil
+            }
+            serverCertificate = string("serverCertificate")
+            serverCertificateUri = string("serverCertificateUri")
+            if case .headers(let value)? = values["headers"] { headers = value } else { headers = nil }
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var values: [String: Value] = [:]
+            if let serverCertificate { values["serverCertificate"] = .string(serverCertificate) }
+            if let serverCertificateUri { values["serverCertificateUri"] = .string(serverCertificateUri) }
+            if let headers { values["headers"] = .headers(headers) }
+            var container = encoder.singleValueContainer()
+            try container.encode(values)
         }
     }
 
